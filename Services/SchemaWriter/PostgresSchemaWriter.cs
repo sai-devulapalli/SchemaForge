@@ -358,6 +358,18 @@ private string ConvertDefaultExpression(string expression)
                 }
                 else
                 {
+                    var convertedTableName = namingConverter.Convert(table.TableName);
+                    if (connection == null)
+                    {
+                        logger.LogWarning("Connection is null, skipping foreign key existence check for {FkName}", fk.Name);
+                        continue;
+                    }
+                    if (await ForeignKeyExistsAsync(connection, schemaName, convertedTableName, fkName))
+                    {
+                        logger.LogWarning("Foreign key {FkName} on table {TableName} already exists. Skipping creation.", fk.Name, convertedTableName);
+                        continue;
+                    }
+
                     try
                     {
                         await using var cmd = new NpgsqlCommand(sql, connection);
@@ -377,7 +389,7 @@ private string ConvertDefaultExpression(string expression)
         var tableName = namingConverter.Convert(table.TableName);
         var fullTableName = $"{schemaName}.\"{tableName}\"";
 
-        sb.AppendLine($"CREATE TABLE {fullTableName} (");
+        sb.AppendLine($"CREATE TABLE IF NOT EXISTS {fullTableName} (");
 
         var columnDefinitions = table.Columns
             .Select(col => $"    {GenerateColumnDefinition(col)}")
@@ -421,5 +433,28 @@ private string ConvertDefaultExpression(string expression)
                 FOREIGN KEY ({columnName}) 
                 REFERENCES {fullRefTable}({refColumn});
             """;
+    }
+
+    private async Task<bool> ForeignKeyExistsAsync(NpgsqlConnection connection, string schemaName, string tableName, string fkName)
+    {
+        var sql = $"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_constraint c
+                JOIN pg_class t ON c.conrelid = t.oid
+                JOIN pg_namespace n ON t.relnamespace = n.oid
+                WHERE n.nspname = @schemaName
+                  AND t.relname = @tableName
+                  AND c.conname = @fkName
+                  AND c.contype = 'f'
+            );
+            """;
+
+        await using var cmd = new NpgsqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("schemaName", schemaName);
+        cmd.Parameters.AddWithValue("tableName", tableName);
+        cmd.Parameters.AddWithValue("fkName", fkName);
+
+        return Convert.ToBoolean(await cmd.ExecuteScalarAsync());
     }
 }

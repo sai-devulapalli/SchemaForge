@@ -41,31 +41,41 @@ public class PostgresDataWriter(INamingConverter namingConverter, ILogger<Postgr
             var columns = table.Columns.Select(c => $"\"{namingConverter.Convert(c.ColumnName)}\"");
             var columnList = string.Join(", ", columns);
 
+            // Check if the table has existing rows and truncate if necessary
+            if (await TableHasRowsAsync(connection, schemaName, tableName))
+            {
+                logger.LogInformation("Truncating table {Schema}.{Table} before bulk insert.", schemaName, tableName);
+                await using var truncateCmd = new NpgsqlCommand($"TRUNCATE TABLE {fullTableName} RESTART IDENTITY CASCADE;", connection);
+                await truncateCmd.ExecuteNonQueryAsync();
+            }
+
             await using var writer = await connection.BeginBinaryImportAsync(
                 $"COPY {fullTableName} ({columnList}) FROM STDIN (FORMAT BINARY)");
 
-            foreach (DataRow row in dataTable.Rows)
+            await using (writer)
             {
-                await writer.StartRowAsync();
-
-                foreach (var column in table.Columns)
+                foreach (DataRow row in dataTable.Rows)
                 {
-                    var value = row[column.ColumnName];
+                    await writer.StartRowAsync();
 
-                    if (value == DBNull.Value)
+                    foreach (var column in table.Columns)
                     {
-                        await writer.WriteNullAsync();
-                    }
-                    else
-                    {
-                        await writer.WriteAsync(
-                            ConvertValue(value, column),
-                            GetNpgsqlDbType(column));
+                        var value = row[column.ColumnName];
+
+                        if (value == DBNull.Value)
+                        {
+                            await writer.WriteNullAsync();
+                        }
+                        else
+                        {
+                            await writer.WriteAsync(
+                                ConvertValue(value, column),
+                                GetNpgsqlDbType(column));
+                        }
                     }
                 }
+                await writer.CompleteAsync();
             }
-
-            await writer.CompleteAsync();
             await transaction.CommitAsync();
         }
         catch
@@ -217,4 +227,11 @@ public class PostgresDataWriter(INamingConverter namingConverter, ILogger<Postgr
             "jsonb" => NpgsqlTypes.NpgsqlDbType.Jsonb,
             _ => NpgsqlTypes.NpgsqlDbType.Text
         };
+
+    private async Task<bool> TableHasRowsAsync(NpgsqlConnection connection, string schemaName, string tableName)
+    {
+        var sql = $"SELECT EXISTS (SELECT 1 FROM {schemaName}.\"{tableName}\" LIMIT 1)";
+        await using var cmd = new NpgsqlCommand(sql, connection);
+        return Convert.ToBoolean(await cmd.ExecuteScalarAsync());
+    }
 }

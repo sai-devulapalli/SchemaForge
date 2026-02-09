@@ -43,7 +43,29 @@ services.AddLogging(builder =>
 });
 
 // Bind configuration settings to MigrationSettings class
-services.Configure<MigrationSettings>(configuration);
+services.Configure<MigrationSettings>(options =>
+{
+    configuration.Bind(options);
+
+    // Explicitly handle potential swapping of connection strings if environment variables are mismatched
+    // This is a common issue when setting up different database types for source and target
+    if (options.SourceDatabaseType.Equals(DatabaseTypes.SqlServer, StringComparison.OrdinalIgnoreCase) &&
+        options.TargetDatabaseType.Equals(DatabaseTypes.PostgreSql, StringComparison.OrdinalIgnoreCase))
+    {
+        // If sourceConnectionString contains "Host=" (typical for Postgres)
+        // AND targetConnectionString contains "Server=" (typical for SQL Server)
+        // then they are likely swapped.
+        if (options.SourceConnectionString.Contains("Host=", StringComparison.OrdinalIgnoreCase) &&
+            options.TargetConnectionString.Contains("Server=", StringComparison.OrdinalIgnoreCase))
+        {
+            var logger = services.BuildServiceProvider().GetRequiredService<ILogger<MigrationOrchestrator>>();
+            logger.LogWarning("Detected swapped source and target connection strings based on database types and connection string keywords. Swapping them for correction.");
+            string temp = options.SourceConnectionString;
+            options.SourceConnectionString = options.TargetConnectionString;
+            options.TargetConnectionString = temp;
+        }
+    }
+});
 
 // Configure migration options - controls what gets migrated (schema, data, views, etc.)
 services.Configure<MigrationOptions>(options =>

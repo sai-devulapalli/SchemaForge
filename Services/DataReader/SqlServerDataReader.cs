@@ -57,7 +57,7 @@ public class SqlServerDataReader : IDataReader
         var tableName = QuoteIdentifier(table.TableName);
         var query = $"SELECT COUNT(*) FROM {schemaName}.{tableName}";
         await using var cmd = new SqlCommand(query, connection);
-        return (int)await cmd.ExecuteScalarAsync();
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync());
     }
 
     /// <summary>
