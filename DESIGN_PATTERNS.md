@@ -3,13 +3,15 @@
 ## Architecture Overview
 
 ```
-DbMigrate (Static Factory)
-    |
-    v
-MigrationBuilder (Builder + Fluent Interface)
-    |
-    v
-MigrationOrchestrator (Orchestrator)
+CLI (System.CommandLine)          DbMigrate (Static Factory)
+    |                                 |
+    v                                 v
+Program.cs (ParseResult)         MigrationBuilder (Builder + Fluent Interface)
+    |                                 |
+    +---------- both build -----------+
+                    |
+                    v
+          MigrationOrchestrator (Orchestrator)
     |
     +---> ISchemaReader (Strategy) ---> TableSchema (Common Model)
     |                                        |
@@ -101,7 +103,9 @@ Configuration bound to strongly-typed classes via `IOptions<T>`, following the M
 ### 8. Dependency Injection
 **Location:** `MigrationBuilder.BuildServiceProvider()`, `Program.cs`
 
-All services registered and resolved via `IServiceProvider`. Uses keyed services for database-specific implementations.
+All services registered and resolved via `IServiceProvider`. Uses keyed services for database-specific implementations. Two entry points build the DI container:
+- **CLI path** (`Program.cs`): `System.CommandLine` parses args, merges with `appsettings.json` fallbacks, builds `ServiceCollection` manually.
+- **Fluent API path** (`MigrationBuilder`): Builder accumulates settings, builds `ServiceCollection` in `ExecuteAsync()`.
 
 ### 9. Collector Pattern
 **Interface:** `ISqlCollector`

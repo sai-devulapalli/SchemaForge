@@ -32,6 +32,7 @@ artifacts/
 **/[Pp]ackages/*
 !**/[Pp]ackages/build/
 *.nupkg
+nupkg/
 **/[Pp]ackages/*.lock.json
 
 # Windows

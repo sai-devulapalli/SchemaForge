@@ -38,21 +38,30 @@ cd SchemaForge
 dotnet build
 ```
 
-### 2. Configure
+### 2. Run via CLI
+
+```bash
+# Full migration
+schemaforge --from sqlserver --to postgres \
+  --source-conn "Server=localhost;Database=SourceDB;User Id=sa;Password=pass;TrustServerCertificate=True" \
+  --target-conn "Host=localhost;Database=targetdb;Username=postgres;Password=pass" \
+  --schema public
+
+# Or with dotnet run
+dotnet run -- --from sqlserver --to postgres \
+  --source-conn "Server=localhost;..." --target-conn "Host=localhost;..."
+```
+
+### 3. Or configure via appsettings.json
 
 Copy the template and fill in your connection strings:
 
 ```bash
 cp appsettings.template.json appsettings.json
-```
-
-### 3. Run
-
-```bash
 dotnet run
 ```
 
-Or use the fluent API in code:
+### 4. Or use the fluent API in code
 
 ```csharp
 using SchemaForge.Builder;
@@ -63,6 +72,66 @@ await DbMigrate
     .MigrateAll()
     .ExecuteAsync();
 ```
+
+### Install as a .NET global tool
+
+```bash
+dotnet pack
+dotnet tool install --global --add-source ./nupkg SchemaForge
+schemaforge --help
+```
+
+## CLI Usage
+
+SchemaForge is a full CLI tool powered by `System.CommandLine`. All options can be passed as command-line arguments, with `appsettings.json` and environment variables as fallbacks.
+
+**Config resolution order**: CLI args > environment variables > appsettings.json > defaults
+
+```bash
+# Full migration
+schemaforge --from sqlserver --to postgres \
+  --source-conn "Server=localhost;..." \
+  --target-conn "Host=localhost;..." \
+  --schema public
+
+# Schema only, dry run to file
+schemaforge --from mysql --to postgres \
+  --source-conn "..." --target-conn "..." \
+  --schema-only --dry-run --dry-run-output migration.sql
+
+# With table filtering
+schemaforge --from sqlserver --to mysql \
+  --source-conn "..." --target-conn "..." \
+  --include-tables Users,Orders --batch-size 5000
+
+# Version
+schemaforge --version
+```
+
+### CLI Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--from` | string | - | Source DB type: `sqlserver`, `postgres`, `mysql`, `oracle` |
+| `--to` | string | - | Target DB type: `sqlserver`, `postgres`, `mysql`, `oracle` |
+| `--source-conn` | string | - | Source connection string |
+| `--target-conn` | string | - | Target connection string |
+| `--schema` | string | `public` | Target schema name |
+| `--batch-size` | int | `1000` | Rows per batch |
+| `--naming` | string | `auto` | Naming convention |
+| `--schema-only` | flag | `false` | Migrate schema without data |
+| `--data-only` | flag | `false` | Migrate data only (schema must exist) |
+| `--no-views` | flag | `false` | Skip view migration |
+| `--no-indexes` | flag | `false` | Skip index migration |
+| `--no-constraints` | flag | `false` | Skip constraint migration |
+| `--no-foreign-keys` | flag | `false` | Skip FK migration |
+| `--include-tables` | string[] | `[]` | Tables to include (comma-separated) |
+| `--exclude-tables` | string[] | `[]` | Tables to exclude (comma-separated) |
+| `--dry-run` | flag | `false` | Generate SQL without executing |
+| `--dry-run-output` | string | - | File path for dry run SQL output |
+| `--continue-on-error` | flag | `true` | Continue on failures |
+| `--verbose` | flag | `false` | Enable debug logging |
+| `--quiet` | flag | `false` | Warnings only |
 
 ## Configuration
 
@@ -129,6 +198,11 @@ Connection strings also support environment variable substitution (e.g., `${SOUR
 ### Run Migration
 
 ```bash
+# Via CLI arguments
+dotnet run -- --from sqlserver --to postgres \
+  --source-conn "Server=localhost;..." --target-conn "Host=localhost;..."
+
+# Via appsettings.json (fallback when no CLI args provided)
 dotnet run
 ```
 
@@ -407,6 +481,7 @@ For a detailed breakdown of design patterns and architectural decisions, see [DE
 - `Microsoft.Extensions.Logging` - Logging abstractions
 - `Microsoft.Extensions.Logging.Console` - Console logging provider
 - `Microsoft.Extensions.Options.ConfigurationExtensions` - Options configuration support
+- `System.CommandLine` - Command-line argument parsing
 
 ## Limitations
 

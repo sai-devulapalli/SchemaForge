@@ -107,7 +107,7 @@ oracle    -> sqlserver   oracle    -> postgres  oracle    -> mysql
 1. Seed SQL Server with test data
 2. If source is not SQL Server, seed the source by migrating from SQL Server
 3. Clean the target database
-4. Run SchemaForge migration (schema + data only)
+4. Run SchemaForge migration via CLI (schema + data, views/indexes/constraints disabled)
 5. Validate: table count = 5, total row count = 48
 
 **Validation criteria:**
@@ -131,15 +131,12 @@ Runs after Phase 1. Seeds each target from SQL Server and performs spot-checks:
 
 ### Phase 3: Extended Migration (3 tests)
 
-Tests full migration with views, indexes, and constraints enabled. Runs `sqlserver -> {postgres, mysql, oracle}` with all migration flags:
+Tests full migration with views, indexes, and constraints enabled. Runs `sqlserver -> {postgres, mysql, oracle}` without the `--no-*` skip flags, so all migration components are active:
 
-```json
-{
-  "MigrateViews": true,
-  "MigrateIndexes": true,
-  "MigrateConstraints": true,
-  "MigrateForeignKeys": true
-}
+```bash
+dotnet run -- --from sqlserver --to postgres \
+  --source-conn "..." --target-conn "..." --schema public \
+  --batch-size 1000 --continue-on-error
 ```
 
 **Validation criteria:**
@@ -168,9 +165,8 @@ Tests full migration with views, indexes, and constraints enabled. Runs `sqlserv
 │    1. Seed SQL Server                        │
 │    2. Seed source (if not SQL Server)        │
 │    3. Clean target                           │
-│    4. Write appsettings.json                 │
-│    5. dotnet run (schema + data)             │
-│    6. Validate tables=5, rows=48             │
+│    4. dotnet run -- --from/--to CLI args     │
+│    5. Validate tables=5, rows=48             │
 └─────────────┬───────────────────────────────┘
               │
               ▼
@@ -261,8 +257,11 @@ docker compose -f docker-compose.test.yml exec oracle \
 ### 3. Run a single migration manually
 
 ```bash
-# Edit appsettings.json with desired source/target
-dotnet run
+# Pass source/target via CLI arguments
+dotnet run -- --from sqlserver --to postgres \
+  --source-conn "Server=localhost,1434;Database=schemaforge_test;User Id=sa;Password=SchemaForge@Test1;TrustServerCertificate=True;" \
+  --target-conn "Host=localhost;Port=5433;Database=schemaforge_test;Username=postgres;Password=SchemaForgeTest1;" \
+  --schema public --verbose
 ```
 
 ### 4. Common failure patterns

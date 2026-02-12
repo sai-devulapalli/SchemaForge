@@ -11,8 +11,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$PROJECT_DIR/docker-compose.test.yml"
-APPSETTINGS="$PROJECT_DIR/appsettings.json"
-APPSETTINGS_BAK="$PROJECT_DIR/appsettings.json.testbak"
 LOG_DIR="$SCRIPT_DIR/logs"
 
 KEEP_CONTAINERS=false
@@ -84,10 +82,6 @@ dc() { docker compose -f "$COMPOSE_FILE" "$@"; }
 # Cleanup on exit
 # ============================================================
 cleanup() {
-    if [ -f "$APPSETTINGS_BAK" ]; then
-        mv "$APPSETTINGS_BAK" "$APPSETTINGS"
-        log "Restored original appsettings.json"
-    fi
     if [ "$KEEP_CONTAINERS" = false ]; then
         log "Stopping containers (use --keep-containers to skip)..."
         dc down -v 2>/dev/null || true
@@ -252,9 +246,9 @@ seed_sqlserver() {
 }
 
 # ============================================================
-# Write appsettings.json for a migration
+# Build CLI arguments for a migration
 # ============================================================
-write_config() {
+build_cli_args() {
     local source_type="$1"
     local target_type="$2"
     local full_migration="${3:-false}"
@@ -263,43 +257,16 @@ write_config() {
     target_conn="$(get_conn "$target_type")"
     target_schema="$(get_schema "$target_type")"
 
-    local migrate_views="false"
-    local migrate_indexes="false"
-    local migrate_constraints="false"
-    local migrate_fks="false"
-    if [ "$full_migration" = "true" ]; then
-        migrate_views="true"
-        migrate_indexes="true"
-        migrate_constraints="true"
-        migrate_fks="true"
-    fi
+    CLI_ARGS=(
+        --from "$source_type" --to "$target_type"
+        --source-conn "$source_conn" --target-conn "$target_conn"
+        --schema "$target_schema" --batch-size 1000
+        --continue-on-error
+    )
 
-    cat > "$APPSETTINGS" <<JSONEOF
-{
-  "sourceDatabaseType": "${source_type}",
-  "targetDatabaseType": "${target_type}",
-  "sourceConnectionString": "${source_conn}",
-  "targetConnectionString": "${target_conn}",
-  "targetSchemaName": "${target_schema}",
-  "batchSize": 1000,
-  "namingConvention": "auto",
-  "useTargetDatabaseStandards": true,
-  "preserveSourceCase": false,
-  "maxIdentifierLength": 0,
-  "MigrationOptions": {
-    "MigrateSchema": true,
-    "MigrateData": true,
-    "MigrateViews": ${migrate_views},
-    "MigrateIndexes": ${migrate_indexes},
-    "MigrateConstraints": ${migrate_constraints},
-    "MigrateForeignKeys": ${migrate_fks},
-    "DataBatchSize": 1000,
-    "ContinueOnError": true,
-    "IncludeTables": [],
-    "ExcludeTables": []
-  }
-}
-JSONEOF
+    if [ "$full_migration" != "true" ]; then
+        CLI_ARGS+=(--no-views --no-indexes --no-constraints --no-foreign-keys)
+    fi
 }
 
 # ============================================================
@@ -307,9 +274,9 @@ JSONEOF
 # ============================================================
 run_migration() {
     local source="$1" target="$2" log_file="$3" full="${4:-false}"
-    write_config "$source" "$target" "$full"
+    build_cli_args "$source" "$target" "$full"
     local exit_code=0
-    (cd "$PROJECT_DIR" && dotnet run 2>&1) | tee "$log_file" || exit_code=$?
+    (cd "$PROJECT_DIR" && dotnet run -- "${CLI_ARGS[@]}" 2>&1) | tee "$log_file" || exit_code=$?
     return $exit_code
 }
 
@@ -655,9 +622,9 @@ run_test() {
     if [ "$source" != "sqlserver" ]; then
         log "  Preparing source: seeding $source from SQL Server..."
         clean_db "$source"
-        write_config "sqlserver" "$source"
+        build_cli_args "sqlserver" "$source"
         local seed_log="$LOG_DIR/seed_${source}.log"
-        if ! (cd "$PROJECT_DIR" && dotnet run 2>&1) > "$seed_log" 2>&1; then
+        if ! (cd "$PROJECT_DIR" && dotnet run -- "${CLI_ARGS[@]}" 2>&1) > "$seed_log" 2>&1; then
             fail "$label (could not seed $source, see $seed_log)"
             return
         fi
@@ -686,11 +653,6 @@ main() {
     echo "  Project: $PROJECT_DIR"
     echo "  Compose: $COMPOSE_FILE"
     echo ""
-
-    # Backup original appsettings.json
-    if [ -f "$APPSETTINGS" ]; then
-        cp "$APPSETTINGS" "$APPSETTINGS_BAK"
-    fi
 
     mkdir -p "$LOG_DIR"
 
@@ -750,8 +712,8 @@ main() {
         if [ "$target" != "sqlserver" ]; then
             clean_db "$target"
             local dv_log="$LOG_DIR/dataval_sqlserver_to_${target}.log"
-            write_config "sqlserver" "$target"
-            (cd "$PROJECT_DIR" && dotnet run 2>&1) > "$dv_log" 2>&1
+            build_cli_args "sqlserver" "$target"
+            (cd "$PROJECT_DIR" && dotnet run -- "${CLI_ARGS[@]}" 2>&1) > "$dv_log" 2>&1
         fi
         validate_data_values "$target"
     done
