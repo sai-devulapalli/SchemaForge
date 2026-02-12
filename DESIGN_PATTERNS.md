@@ -60,11 +60,23 @@ Every configuration method returns `this`, enabling method chaining for readable
 ### 4. Strategy Pattern
 **Interfaces:** `ISchemaReader`, `ISchemaWriter`, `IDataReader`, `IDataWriter`, `INamingConverter`
 
-Multiple interchangeable implementations selected at runtime based on database type:
-- `ISchemaWriter` -> `PostgresSchemaWriter`, `SqlServerSchemaWriter`, `MySqlSchemaWriter`, `OracleSchemaWriter`
-- `ISchemaReader` -> `PostgresSchemaReader`, `SqlServerSchemaReader`, `MySqlSchemaReader`, `OracleSchemaReader`
+This pattern is implemented via **keyed Dependency Injection (DI) services**. Each database-specific implementation of a strategy (e.g., `PostgresSchemaWriter`, `SqlServerSchemaWriter`) is registered with a unique key corresponding to the database type (e.g., "postgres", "sqlserver").
 
-Selected via DI keyed services: `GetRequiredKeyedService<ISchemaWriter>("postgres")`
+At runtime, the application resolves the correct strategy dynamically based on the user's configuration. This avoids conditional logic (like `if/switch` statements) and adheres to the **Open/Closed Principle**, as adding support for a new database only requires adding new implementations, not modifying existing factory or orchestration code.
+
+```csharp
+// Example: Resolving the ISchemaWriter for the target database
+var schemaWriter = serviceProvider.GetRequiredKeyedService<ISchemaWriter>(settings.TargetDatabaseType);
+
+// schemaWriter is now either PostgresSchemaWriter, SqlServerSchemaWriter, etc.
+await schemaWriter.CreateTableAsync(...);
+```
+
+This is used for all core database interactions:
+- `ISchemaReader`: Reading source schema.
+- `ISchemaWriter`: Writing target schema.
+- `IDataReader`: Reading source data.
+- `IDataWriter`: Writing target data.
 
 ### 5. Adapter Pattern
 **Interfaces:** `IDataTypeMapper`, `ISqlDialectConverter`
@@ -117,59 +129,3 @@ OracleConnection + ALL_TABLES       -->  OracleSchemaReader     -->  TableSchema
 ### Explicit Adapters (Converters)
 - `IDataTypeMapper`: Adapts `int/bigint/varchar` between all 4 database systems
 - `ISqlDialectConverter`: Adapts SQL functions, operators, and syntax between dialects
-
-## Is Adapter Pattern the Right Next Step?
-
-### Current Problem
-Each database currently requires **5 separate classes**:
-- `SchemaReader` - reads metadata
-- `SchemaWriter` - generates/executes DDL
-- `DataReader` - reads row data
-- `DataWriter` - writes row data
-- Plus shared converters (DataTypeMapper, DialectConverter)
-
-The `BulkDataMigrator` uses type-checking to pair readers/writers:
-```csharp
-private IDataReader GetDataReader(ISchemaReader schemaReader)
-{
-    return schemaReader switch
-    {
-        SqlServerSchemaReader => new SqlServerDataReader(),
-        MySqlSchemaReader => new MySqlDataReader(),
-        ...
-    };
-}
-```
-This is a code smell - it breaks the Open/Closed principle.
-
-### Recommended: Database Adapter
-A unified `IDatabaseAdapter` would consolidate all database-specific behavior:
-
-```csharp
-public interface IDatabaseAdapter
-{
-    // Schema operations
-    Task<List<TableSchema>> ReadSchemaAsync(string connectionString, ...);
-    string GenerateCreateTableSql(string schemaName, TableSchema table);
-    string GenerateCreateIndexSql(string schemaName, IndexSchema index);
-
-    // Data operations
-    Task<DataTable> FetchBatchAsync(string connectionString, TableSchema table, int offset, int limit);
-    Task BulkInsertAsync(string connectionString, string schemaName, TableSchema table, DataTable data);
-
-    // Dialect
-    string QuoteIdentifier(string identifier);
-    string MapDataType(ColumnSchema column);
-}
-```
-
-### Trade-offs
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Current (Strategy)** | Clear separation of concerns, each class is small | 5 classes per database (20 total), type-checking in BulkDataMigrator |
-| **Database Adapter** | One class per database (4 total), no type-checking needed, easier to add new databases | Larger classes, mixes read/write concerns |
-| **Hybrid** | Keep ISchemaReader/ISchemaWriter, but add IDatabaseAdapter for data operations only | Moderate complexity, solves the type-checking smell |
-
-### Verdict
-The **Adapter pattern is a good fit** for the data layer (`IDataReader`/`IDataWriter`) where the type-checking smell exists. For schema operations, the current Strategy pattern works well since `ISchemaReader` and `ISchemaWriter` have clearly different responsibilities. A hybrid approach would be the best next step.

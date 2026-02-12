@@ -108,6 +108,7 @@ Connection strings also support environment variable substitution (e.g., `${SOUR
 | `NamingConvention` | `auto`, `snake_case`, `PascalCase`, `camelCase`, `lowercase`, `UPPERCASE`, `preserve` | `auto` |
 | `UseTargetDatabaseStandards` | Apply target database naming conventions | `true` |
 | `PreserveSourceCase` | Keep original identifier casing | `false` |
+| `MaxIdentifierLength` | Maximum identifier length (0 = target default) | `0` |
 
 ### Migration Options
 
@@ -243,15 +244,17 @@ await DbMigrate
 | `WithBatchSize(int)` | Set data batch size |
 | `ContinueOnError()` | Continue on errors |
 | `StopOnError()` | Stop on first error |
-| `WithNamingConvention(string)` | Set naming convention |
+| `WithNamingConvention(NamingConvention)` | Set naming convention from enum |
 | `PreserveNames()` | Keep original identifier names |
 | `WithAutoNaming()` | Auto-detect naming based on target DB |
+| `WithMaxIdentifierLength(int)` | Set maximum identifier length (0 = target default) |
 | `DryRun()` | Generate SQL without executing |
 | `DryRun(outputPath)` | Generate SQL and write to file |
 | `WithDataSamples(sampleCount)` | Include sample INSERT statements in dry run |
 | `WithoutDataSamples()` | Exclude data samples from dry run output |
 | `ExecuteDryRunAsync()` | Execute dry run and return generated SQL |
 | `ConfigureLogging(Action)` | Configure logging |
+| `WithLogLevel(LogLevel)` | Set minimum log level |
 | `Verbose()` | Enable verbose logging |
 | `Quiet()` | Minimize logging output |
 | `ExecuteAsync()` | Run the migration |
@@ -398,8 +401,12 @@ For a detailed breakdown of design patterns and architectural decisions, see [DE
 - `MySql.Data` - MySQL connectivity
 - `Oracle.ManagedDataAccess.Core` - Oracle connectivity
 - `Microsoft.Extensions.Configuration` - Configuration management
+- `Microsoft.Extensions.Configuration.EnvironmentVariables` - Environment variable configuration provider
+- `Microsoft.Extensions.Configuration.Json` - JSON configuration provider
 - `Microsoft.Extensions.DependencyInjection` - Dependency injection
-- `Microsoft.Extensions.Logging` - Logging
+- `Microsoft.Extensions.Logging` - Logging abstractions
+- `Microsoft.Extensions.Logging.Console` - Console logging provider
+- `Microsoft.Extensions.Options.ConfigurationExtensions` - Options configuration support
 
 ## Limitations
 
