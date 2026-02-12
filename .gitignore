@@ -44,6 +44,9 @@ Desktop.ini
 .AppleDouble
 .LSOverride
 
+# Claude Code
+.claude/settings.local.json
+
 # Secrets and configuration
 appsettings.json
 appsettings.*.json

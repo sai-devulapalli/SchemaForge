@@ -52,7 +52,7 @@ public class MySqlDataWriter(INamingConverter namingConverter, ILogger<MySqlData
 
                     var paramName = $"@p{i}";
                     values.Add(paramName);
-                    parameters.Add(new MySqlParameter(paramName, value == DBNull.Value ? null : value));
+                    parameters.Add(new MySqlParameter(paramName, value == DBNull.Value ? null : ConvertToMySqlType(value)));
                 }
 
                 var sql = $"INSERT INTO `{tableName}` ({columnList}) VALUES ({string.Join(", ", values)})";
@@ -132,6 +132,23 @@ public class MySqlDataWriter(INamingConverter namingConverter, ILogger<MySqlData
         await connection.OpenAsync();
         await using var cmd = new MySqlCommand("SET FOREIGN_KEY_CHECKS=1;", connection);
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>
+    /// Converts source values to MySQL-compatible types.
+    /// Handles date formatting and boolean conversions from other databases.
+    /// </summary>
+    private static object ConvertToMySqlType(object value)
+    {
+        return value switch
+        {
+            DateOnly d => d.ToString("yyyy-MM-dd"),
+            DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss"),
+            DateTimeOffset dto => dto.DateTime.ToString("yyyy-MM-dd HH:mm:ss"),
+            TimeOnly t => t.ToString("HH:mm:ss"),
+            bool b => b ? 1 : 0,
+            _ => value
+        };
     }
 
     /// <summary>

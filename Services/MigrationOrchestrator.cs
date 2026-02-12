@@ -142,7 +142,8 @@ public class MigrationOrchestrator(
                 await schemaWriter.CreateViewsAsync(
                     _settings.TargetConnectionString,
                     _settings.TargetSchemaName,
-                    views);
+                    views,
+                    tables);
             }
             else
             {

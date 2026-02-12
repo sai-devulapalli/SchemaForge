@@ -76,6 +76,7 @@ public class OracleSchemaReader(ILogger<OracleSchemaReader> logger) : ISchemaRea
                     """;
 
         await using var cmd = new OracleCommand(query, connection);
+        cmd.InitialLONGFetchSize = -1; // TEXT column in ALL_VIEWS is LONG type
         await using var reader = await cmd.ExecuteReaderAsync();
 
         while (await reader.ReadAsync())
@@ -154,6 +155,7 @@ public class OracleSchemaReader(ILogger<OracleSchemaReader> logger) : ISchemaRea
             """;
 
         await using var cmd = new OracleCommand(query, connection);
+        cmd.InitialLONGFetchSize = -1; // DATA_DEFAULT is a LONG column
         cmd.Parameters.Add(":Schema", OracleDbType.Varchar2).Value = schema;
         cmd.Parameters.Add(":TableName", OracleDbType.Varchar2).Value = tableName;
 
@@ -359,24 +361,30 @@ public class OracleSchemaReader(ILogger<OracleSchemaReader> logger) : ISchemaRea
         var constraints = new List<ConstraintSchema>();
         
         // Get Check Constraints
+        // Note: SEARCH_CONDITION is a LONG column in Oracle - can't use LIKE on it in SQL
         var checkQuery = """
-            SELECT 
+            SELECT
                 CONSTRAINT_NAME,
                 SEARCH_CONDITION
             FROM ALL_CONSTRAINTS
             WHERE OWNER = :Schema
                 AND TABLE_NAME = :TableName
                 AND CONSTRAINT_TYPE = 'C'
-                AND SEARCH_CONDITION NOT LIKE '%IS NOT NULL%'
             """;
 
         await using var checkCmd = new OracleCommand(checkQuery, connection);
+        checkCmd.InitialLONGFetchSize = -1; // Enable LONG column fetching
         checkCmd.Parameters.Add(":Schema", OracleDbType.Varchar2).Value = schema;
         checkCmd.Parameters.Add(":TableName", OracleDbType.Varchar2).Value = tableName;
 
         await using var checkReader = await checkCmd.ExecuteReaderAsync();
         while (await checkReader.ReadAsync())
         {
+            var searchCondition = checkReader.IsDBNull(1) ? "" : checkReader.GetString(1);
+            // Filter out NOT NULL constraints in C# since SEARCH_CONDITION is LONG type
+            if (searchCondition.Contains("IS NOT NULL", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             constraints.Add(new ConstraintSchema
             {
                 ConstraintName = checkReader.GetString(0),
@@ -384,7 +392,7 @@ public class OracleSchemaReader(ILogger<OracleSchemaReader> logger) : ISchemaRea
                 SchemaName = schema,
                 Type = ConstraintType.Check,
                 Columns = new List<string>(),
-                CheckExpression = checkReader.GetString(1)
+                CheckExpression = searchCondition
             });
         }
         await checkReader.CloseAsync();
@@ -425,9 +433,10 @@ public class OracleSchemaReader(ILogger<OracleSchemaReader> logger) : ISchemaRea
 
         // Get Default Constraints (from column defaults)
         var defaultQuery = """
-            SELECT 
+            SELECT
                 COLUMN_NAME,
-                DATA_DEFAULT
+                DATA_DEFAULT,
+                DATA_TYPE
             FROM ALL_TAB_COLUMNS
             WHERE OWNER = :Schema
                 AND TABLE_NAME = :TableName
@@ -435,12 +444,16 @@ public class OracleSchemaReader(ILogger<OracleSchemaReader> logger) : ISchemaRea
             """;
 
         await using var defaultCmd = new OracleCommand(defaultQuery, connection);
+        defaultCmd.InitialLONGFetchSize = -1; // DATA_DEFAULT is a LONG column
         defaultCmd.Parameters.Add(":Schema", OracleDbType.Varchar2).Value = schema;
         defaultCmd.Parameters.Add(":TableName", OracleDbType.Varchar2).Value = tableName;
 
         await using var defaultReader = await defaultCmd.ExecuteReaderAsync();
         while (await defaultReader.ReadAsync())
         {
+            var defaultValue = defaultReader.IsDBNull(1) ? null : defaultReader.GetString(1);
+            if (string.IsNullOrWhiteSpace(defaultValue)) continue;
+
             constraints.Add(new ConstraintSchema
             {
                 ConstraintName = $"DF_{tableName}_{defaultReader.GetString(0)}",
@@ -448,7 +461,8 @@ public class OracleSchemaReader(ILogger<OracleSchemaReader> logger) : ISchemaRea
                 SchemaName = schema,
                 Type = ConstraintType.Default,
                 Columns = new List<string> { defaultReader.GetString(0) },
-                DefaultExpression = defaultReader.GetString(1)
+                DefaultExpression = defaultValue,
+                ColumnDataType = defaultReader.IsDBNull(2) ? null : defaultReader.GetString(2)
             });
         }
 

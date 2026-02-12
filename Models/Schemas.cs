@@ -79,6 +79,9 @@ public record ConstraintSchema
 
     /// <summary>The expression for DEFAULT constraints (e.g., "GETDATE()").</summary>
     public string? DefaultExpression { get; init; }
+
+    /// <summary>The source column data type (e.g., "bit"), used for type-aware default conversion.</summary>
+    public string? ColumnDataType { get; init; }
 }
 
 /// <summary>

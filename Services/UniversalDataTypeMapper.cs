@@ -20,16 +20,44 @@ public class UniversalDataTypeMapper(ILogger<UniversalDataTypeMapper> logger) : 
     /// </summary>
     public string MapDataType(ColumnSchema column, string targetDatabase)
     {
+        // Normalize Oracle-specific type names (e.g., TIMESTAMP(6) -> timestamp)
+        var normalizedColumn = NormalizeSourceType(column);
+
         var result = targetDatabase.ToLowerInvariant() switch
         {
-            DatabaseTypes.PostgreSql => MapToPostgreSqlType(column),
-            DatabaseTypes.MySql => MapToMySqlType(column),
-            DatabaseTypes.Oracle => MapToOracleType(column),
-            DatabaseTypes.SqlServer => MapToSqlServerType(column),
-            _ => MapToPostgreSqlType(column) // Default
+            DatabaseTypes.PostgreSql => MapToPostgreSqlType(normalizedColumn),
+            DatabaseTypes.MySql => MapToMySqlType(normalizedColumn),
+            DatabaseTypes.Oracle => MapToOracleType(normalizedColumn),
+            DatabaseTypes.SqlServer => MapToSqlServerType(normalizedColumn),
+            _ => MapToPostgreSqlType(normalizedColumn) // Default
         };
 
         return result;
+    }
+
+    /// <summary>
+    /// Normalizes database-specific type names to canonical forms for mapping.
+    /// E.g., Oracle's TIMESTAMP(6) -> timestamp, TIMESTAMP(6) WITH TIME ZONE -> timestamp with time zone
+    /// </summary>
+    private static ColumnSchema NormalizeSourceType(ColumnSchema column)
+    {
+        var type = column.DataType.Trim();
+
+        // Oracle TIMESTAMP(n) variants -> canonical names
+        if (type.StartsWith("TIMESTAMP", StringComparison.OrdinalIgnoreCase))
+        {
+            if (type.Contains("WITH LOCAL TIME ZONE", StringComparison.OrdinalIgnoreCase))
+                return column with { DataType = "timestamp with time zone" };
+            if (type.Contains("WITH TIME ZONE", StringComparison.OrdinalIgnoreCase))
+                return column with { DataType = "timestamp with time zone" };
+            return column with { DataType = "timestamp" };
+        }
+
+        // Oracle INTERVAL types
+        if (type.StartsWith("INTERVAL", StringComparison.OrdinalIgnoreCase))
+            return column with { DataType = "varchar" };
+
+        return column;
     }
 
     /// <summary>
@@ -57,11 +85,11 @@ public class UniversalDataTypeMapper(ILogger<UniversalDataTypeMapper> logger) : 
             "bit" or "boolean" => "boolean",
             "decimal" or "numeric" => $"numeric({column.Precision ?? 18},{column.Scale ?? 0})",
             "money" or "smallmoney" => "numeric(19,4)",
-            "float" or "double precision" => "double precision",
-            "real" => "real",
-            "datetime" or "datetime2" or "smalldatetime" => "timestamp without time zone",
+            "float" or "double" or "double precision" or "binary_double" => "double precision",
+            "real" or "binary_float" => "real",
+            "datetime" or "datetime2" or "smalldatetime" or "timestamp without time zone" => "timestamp without time zone",
             "date" => "date",
-            "time" => "time without time zone",
+            "time" or "time without time zone" => "time without time zone",
             "datetimeoffset" or "timestamp with time zone" => "timestamp with time zone",
             "char" or "character" => $"character({column.MaxLength ?? 1})",
             "varchar" or "character varying" => column.MaxLength == -1 ? "text" : $"character varying({column.MaxLength})",
@@ -105,11 +133,11 @@ public class UniversalDataTypeMapper(ILogger<UniversalDataTypeMapper> logger) : 
             "tinyint" or "boolean" or "bit" => "TINYINT(1)",
             "decimal" or "numeric" => $"DECIMAL({column.Precision ?? 18},{column.Scale ?? 0})",
             "money" or "smallmoney" => "DECIMAL(19,4)",
-            "float" or "double precision" => "DOUBLE",
-            "real" => "FLOAT",
-            "datetime" or "datetime2" or "timestamp" or "smalldatetime" => "DATETIME",
+            "float" or "double" or "double precision" or "binary_double" => "DOUBLE",
+            "real" or "binary_float" => "FLOAT",
+            "datetime" or "datetime2" or "timestamp" or "smalldatetime" or "timestamp without time zone" => "DATETIME",
             "date" => "DATE",
-            "time" => "TIME",
+            "time" or "time without time zone" => "TIME",
             "datetimeoffset" or "timestamp with time zone" => "DATETIME",
             "char" or "character" => $"CHAR({column.MaxLength ?? 1})",
             "varchar" or "character varying" => column.MaxLength == -1 ? "TEXT" : $"VARCHAR({column.MaxLength})",
@@ -151,10 +179,10 @@ public class UniversalDataTypeMapper(ILogger<UniversalDataTypeMapper> logger) : 
             "tinyint" or "boolean" or "bit" => "NUMBER(3)",
             "decimal" or "numeric" => $"NUMBER({column.Precision ?? 18},{column.Scale ?? 0})",
             "money" or "smallmoney" => "NUMBER(19,4)",
-            "float" or "double precision" or "real" => "BINARY_DOUBLE",
-            "datetime" or "datetime2" or "timestamp" or "smalldatetime" => "TIMESTAMP",
+            "float" or "double" or "double precision" or "real" or "binary_double" or "binary_float" => "BINARY_DOUBLE",
+            "datetime" or "datetime2" or "timestamp" or "smalldatetime" or "timestamp without time zone" => "TIMESTAMP",
             "date" => "DATE",
-            "time" => "TIMESTAMP",
+            "time" or "time without time zone" => "TIMESTAMP",
             "datetimeoffset" or "timestamp with time zone" => "TIMESTAMP WITH TIME ZONE",
             "char" or "character" => $"CHAR({column.MaxLength ?? 1})",
             "varchar" or "character varying" => column.MaxLength == -1 ? "CLOB" : $"VARCHAR2({column.MaxLength})",
@@ -198,8 +226,8 @@ public class UniversalDataTypeMapper(ILogger<UniversalDataTypeMapper> logger) : 
             "decimal" or "numeric" => $"DECIMAL({column.Precision ?? 18},{column.Scale ?? 0})",
             "money" => "MONEY",
             "smallmoney" => "SMALLMONEY",
-            "float" or "double precision" => "FLOAT",
-            "real" => "REAL",
+            "float" or "double" or "double precision" or "binary_double" => "FLOAT",
+            "real" or "binary_float" => "REAL",
             "datetime" or "timestamp" or "timestamp without time zone" => "DATETIME2",
             "timestamp with time zone" or "datetimeoffset" => "DATETIMEOFFSET",
             "date" => "DATE",

@@ -50,9 +50,12 @@ public class MySqlSchemaWriter(
     /// <summary>
     /// Creates views in MySQL with converted SQL definitions.
     /// </summary>
-    public async Task CreateViewsAsync(string connectionString, string schemaName, List<ViewSchema> views)
+    public async Task CreateViewsAsync(string connectionString, string schemaName, List<ViewSchema> views,
+        List<TableSchema>? sourceTables = null)
     {
         logger.LogInformation("Creating MySQL views...");
+
+        var tableNameMap = BuildTableNameMap(sourceTables);
 
         MySqlConnection? connection = null;
         if (!sqlCollector.IsCollecting)
@@ -75,7 +78,10 @@ public class MySqlSchemaWriter(
                 var convertedDefinition = dialectConverter.ConvertViewDefinition(
                     view.Definition,
                     sourceDb,
-                    DatabaseTypes.MySql
+                    DatabaseTypes.MySql,
+                    view.SchemaName,
+                    schemaName,
+                    tableNameMap
                 );
                 var sql = $"CREATE OR REPLACE VIEW `{viewName}` AS {convertedDefinition}";
 
@@ -242,6 +248,7 @@ public class MySqlSchemaWriter(
     {
         var convertedColumn = namingConverter.Convert(columnName);
         var converted = dialectConverter.ConvertDefaultExpression(defaultExpression, dialectConverter.DetectSourceDatabase(defaultExpression), DatabaseTypes.MySql);
+        if (string.IsNullOrWhiteSpace(converted)) return "";
         return $"ALTER TABLE `{tableName}` ALTER COLUMN `{convertedColumn}` SET DEFAULT {converted}";
     }
 
@@ -386,5 +393,24 @@ public class MySqlSchemaWriter(
                 FOREIGN KEY (`{columnName}`)
                 REFERENCES `{refTable}`(`{refColumn}`);
             """;
+    }
+
+    private Dictionary<string, string>? BuildTableNameMap(List<TableSchema>? sourceTables)
+    {
+        if (sourceTables == null || sourceTables.Count == 0) return null;
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var table in sourceTables)
+        {
+            var convertedTable = namingConverter.Convert(table.TableName);
+            if (table.TableName != convertedTable)
+                map[table.TableName] = convertedTable;
+            foreach (var col in table.Columns)
+            {
+                var convertedCol = namingConverter.Convert(col.ColumnName);
+                if (col.ColumnName != convertedCol && !map.ContainsKey(col.ColumnName))
+                    map[col.ColumnName] = convertedCol;
+            }
+        }
+        return map.Count > 0 ? map : null;
     }
 }

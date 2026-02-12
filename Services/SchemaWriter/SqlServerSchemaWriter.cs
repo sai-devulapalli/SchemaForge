@@ -47,9 +47,12 @@ public class SqlServerSchemaWriter(
     /// <summary>
     /// Creates views in SQL Server with converted SQL definitions.
     /// </summary>
-    public async Task CreateViewsAsync(string connectionString, string schemaName, List<ViewSchema> views)
+    public async Task CreateViewsAsync(string connectionString, string schemaName, List<ViewSchema> views,
+        List<TableSchema>? sourceTables = null)
     {
         logger.LogInformation("Creating SQL Server views...");
+
+        var tableNameMap = BuildTableNameMap(sourceTables);
 
         SqlConnection? connection = null;
         if (!sqlCollector.IsCollecting)
@@ -69,7 +72,10 @@ public class SqlServerSchemaWriter(
                 var convertedDefinition = dialectConverter.ConvertViewDefinition(
                     view.Definition,
                     sourceDb,
-                    DatabaseTypes.SqlServer
+                    DatabaseTypes.SqlServer,
+                    view.SchemaName,
+                    schemaName,
+                    tableNameMap
                 );
                 var sql = $"CREATE OR ALTER VIEW {fullViewName} AS {convertedDefinition}";
 
@@ -382,5 +388,24 @@ public class SqlServerSchemaWriter(
         var fkName = $"[FK_{namingConverter.Convert(fk.Name)}]";
 
         return $"ALTER TABLE {fullTableName} ADD CONSTRAINT {fkName} FOREIGN KEY ({columnName}) REFERENCES {fullRefTable}({refColumn})";
+    }
+
+    private Dictionary<string, string>? BuildTableNameMap(List<TableSchema>? sourceTables)
+    {
+        if (sourceTables == null || sourceTables.Count == 0) return null;
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var table in sourceTables)
+        {
+            var convertedTable = namingConverter.Convert(table.TableName);
+            if (table.TableName != convertedTable)
+                map[table.TableName] = convertedTable;
+            foreach (var col in table.Columns)
+            {
+                var convertedCol = namingConverter.Convert(col.ColumnName);
+                if (col.ColumnName != convertedCol && !map.ContainsKey(col.ColumnName))
+                    map[col.ColumnName] = convertedCol;
+            }
+        }
+        return map.Count > 0 ? map : null;
     }
 }

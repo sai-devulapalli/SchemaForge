@@ -180,6 +180,21 @@ public class OracleDataWriter(INamingConverter namingConverter, ILogger<OracleDa
     {
         if (value == DBNull.Value) return DBNull.Value;
 
+        // Handle by CLR type first for types that need conversion regardless of source column type
+        switch (value)
+        {
+            case bool boolVal:
+                return boolVal ? 1 : 0;
+            case DateOnly d:
+                return d.ToDateTime(TimeOnly.MinValue);
+            case TimeOnly t:
+                return DateTime.MinValue.Add(t.ToTimeSpan());
+            case DateTimeOffset dto:
+                return dto;
+            case Guid g:
+                return g.ToByteArray();
+        }
+
         return column.DataType.ToLowerInvariant() switch
         {
             "bit" or "boolean" => Convert.ToBoolean(value) ? 1 : 0,

@@ -41,7 +41,7 @@ public class DatabaseStandardsProvider : IDatabaseStandardsProvider
         [DatabaseTypes.MySql] = new DatabaseStandards
         {
             DatabaseType = "MySQL",
-            NamingConvention = NamingConvention.Lowercase,
+            NamingConvention = NamingConvention.SnakeCase,
             MaxIdentifierLength = 64,
             CaseSensitive = false,
             IdentifierQuoteStart = "`",

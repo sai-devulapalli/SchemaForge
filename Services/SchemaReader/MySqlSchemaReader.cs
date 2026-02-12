@@ -375,11 +375,12 @@ public class MySqlSchemaReader(ILogger<MySqlSchemaReader> logger) : ISchemaReade
 
         // Get Default Constraints
         var defaultQuery = """
-            SELECT 
+            SELECT
                 COLUMN_NAME,
-                COLUMN_DEFAULT
+                COLUMN_DEFAULT,
+                DATA_TYPE
             FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = @Schema 
+            WHERE TABLE_SCHEMA = @Schema
                 AND TABLE_NAME = @TableName
                 AND COLUMN_DEFAULT IS NOT NULL
             """;
@@ -398,7 +399,8 @@ public class MySqlSchemaReader(ILogger<MySqlSchemaReader> logger) : ISchemaReade
                 SchemaName = schema,
                 Type = ConstraintType.Default,
                 Columns = new List<string> { defaultReader.GetString(0) },
-                DefaultExpression = defaultReader.GetString(1)
+                DefaultExpression = defaultReader.GetString(1),
+                ColumnDataType = defaultReader.GetString(2)
             });
         }
 

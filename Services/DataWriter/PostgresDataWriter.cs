@@ -189,10 +189,35 @@ public class PostgresDataWriter(INamingConverter namingConverter, ILogger<Postgr
 
     /// <summary>
     /// Converts source values to PostgreSQL-compatible types.
+    /// Handles cross-database type mismatches (e.g., MySQL tinyint(1) → Boolean).
     /// </summary>
     private static object ConvertValue(object value, ColumnSchema column)
     {
         if (value == DBNull.Value) return DBNull.Value;
+
+        var targetType = GetNpgsqlDbType(column);
+
+        // Handle MySQL tinyint(1) which returns System.Boolean but maps to Smallint
+        if (value is bool boolVal)
+        {
+            if (targetType == NpgsqlTypes.NpgsqlDbType.Smallint || targetType == NpgsqlTypes.NpgsqlDbType.Integer)
+                return (short)(boolVal ? 1 : 0);
+            return boolVal;
+        }
+
+        // Handle Oracle NUMBER → integer conversion (Oracle returns decimal for all NUMBER types)
+        if (value is decimal decimalVal)
+        {
+            return targetType switch
+            {
+                NpgsqlTypes.NpgsqlDbType.Integer => (int)decimalVal,
+                NpgsqlTypes.NpgsqlDbType.Bigint => (long)decimalVal,
+                NpgsqlTypes.NpgsqlDbType.Smallint => (short)decimalVal,
+                NpgsqlTypes.NpgsqlDbType.Double => (double)decimalVal,
+                NpgsqlTypes.NpgsqlDbType.Real => (float)decimalVal,
+                _ => decimalVal
+            };
+        }
 
         return column.DataType.ToLowerInvariant() switch
         {
@@ -205,21 +230,35 @@ public class PostgresDataWriter(INamingConverter namingConverter, ILogger<Postgr
     /// <summary>
     /// Maps source data types to NpgsqlDbType for the COPY protocol.
     /// </summary>
-    private static NpgsqlTypes.NpgsqlDbType GetNpgsqlDbType(ColumnSchema column) =>
-        column.DataType.ToLowerInvariant() switch
+    private static NpgsqlTypes.NpgsqlDbType GetNpgsqlDbType(ColumnSchema column)
+    {
+        var type = column.DataType.ToLowerInvariant();
+
+        // Normalize Oracle TIMESTAMP(n) variants
+        if (type.StartsWith("timestamp"))
+        {
+            if (type.Contains("with time zone"))
+                return NpgsqlTypes.NpgsqlDbType.TimestampTz;
+            return NpgsqlTypes.NpgsqlDbType.Timestamp;
+        }
+
+        return type switch
         {
             "int" or "integer" => NpgsqlTypes.NpgsqlDbType.Integer,
             "bigint" => NpgsqlTypes.NpgsqlDbType.Bigint,
             "smallint" => NpgsqlTypes.NpgsqlDbType.Smallint,
             "tinyint" => NpgsqlTypes.NpgsqlDbType.Smallint,
             "bit" or "boolean" => NpgsqlTypes.NpgsqlDbType.Boolean,
-            "decimal" or "numeric" or "money" or "smallmoney" or "number" => NpgsqlTypes.NpgsqlDbType.Numeric,
-            "float" or "double precision" => NpgsqlTypes.NpgsqlDbType.Double,
-            "real" => NpgsqlTypes.NpgsqlDbType.Real,
-            "datetime" or "datetime2" or "smalldatetime" or "timestamp" => NpgsqlTypes.NpgsqlDbType.Timestamp,
+            "decimal" or "numeric" or "money" or "smallmoney" => NpgsqlTypes.NpgsqlDbType.Numeric,
+            "number" => column.Scale.HasValue && column.Scale > 0
+                ? NpgsqlTypes.NpgsqlDbType.Numeric
+                : NpgsqlTypes.NpgsqlDbType.Integer,
+            "float" or "double" or "double precision" or "binary_double" => NpgsqlTypes.NpgsqlDbType.Double,
+            "real" or "binary_float" => NpgsqlTypes.NpgsqlDbType.Real,
+            "datetime" or "datetime2" or "smalldatetime" => NpgsqlTypes.NpgsqlDbType.Timestamp,
             "date" => NpgsqlTypes.NpgsqlDbType.Date,
-            "time" => NpgsqlTypes.NpgsqlDbType.Time,
-            "datetimeoffset" or "timestamp with time zone" => NpgsqlTypes.NpgsqlDbType.TimestampTz,
+            "time" or "time without time zone" => NpgsqlTypes.NpgsqlDbType.Time,
+            "datetimeoffset" => NpgsqlTypes.NpgsqlDbType.TimestampTz,
             "uniqueidentifier" or "uuid" => NpgsqlTypes.NpgsqlDbType.Uuid,
             "varbinary" or "binary" or "image" or "bytea" or "blob" or "raw" => NpgsqlTypes.NpgsqlDbType.Bytea,
             "xml" or "xmltype" => NpgsqlTypes.NpgsqlDbType.Xml,
@@ -227,6 +266,7 @@ public class PostgresDataWriter(INamingConverter namingConverter, ILogger<Postgr
             "jsonb" => NpgsqlTypes.NpgsqlDbType.Jsonb,
             _ => NpgsqlTypes.NpgsqlDbType.Text
         };
+    }
 
     private async Task<bool> TableHasRowsAsync(NpgsqlConnection connection, string schemaName, string tableName)
     {

@@ -90,7 +90,9 @@ public class SqlDialectConverter : ISqlDialectConverter
     /// Converts a complete view definition from source to target database dialect.
     /// Handles identifier quotes, functions, operators, and boolean literals.
     /// </summary>
-    public string ConvertViewDefinition(string definition, string sourceDb, string targetDb)
+    public string ConvertViewDefinition(string definition, string sourceDb, string targetDb,
+        string? sourceSchema = null, string? targetSchema = null,
+        Dictionary<string, string>? tableNameMap = null)
     {
         if (string.IsNullOrEmpty(definition)) return definition;
 
@@ -100,11 +102,23 @@ public class SqlDialectConverter : ISqlDialectConverter
         var converted = definition;
 
         // Remove CREATE VIEW header if present
-        converted = Regex.Replace(converted, @"CREATE\s+VIEW\s+[\w\[\]""`.]+\s+AS\s+", "", 
+        converted = Regex.Replace(converted, @"CREATE\s+VIEW\s+[\w\[\]""`.]+\s+AS\s+", "",
             RegexOptions.IgnoreCase);
 
         // Convert identifier quotes
         converted = ConvertIdentifierQuotes(converted, source, target);
+
+        // Replace source schema references with target schema
+        if (!string.IsNullOrEmpty(sourceSchema) && !string.IsNullOrEmpty(targetSchema))
+        {
+            converted = ReplaceSchemaReferences(converted, sourceSchema, targetSchema, target);
+        }
+
+        // Replace source table names with target table names
+        if (tableNameMap != null)
+        {
+            converted = ReplaceTableNames(converted, tableNameMap, target);
+        }
 
         // Convert functions
         converted = ConvertFunctions(converted, source, target);
@@ -136,7 +150,8 @@ public class SqlDialectConverter : ISqlDialectConverter
         {
             converted = converted.Substring(5).Trim();
         }
-        converted = converted.Trim('(', ')');
+        // Strip matching outer wrapper parentheses only
+        converted = StripOuterParentheses(converted);
 
         // Convert identifier quotes
         converted = ConvertIdentifierQuotes(converted, source, target);
@@ -161,7 +176,7 @@ public class SqlDialectConverter : ISqlDialectConverter
         var source = GetDialect(sourceDb);
         var target = GetDialect(targetDb);
 
-        var converted = expression.Trim('(', ')', ' ');
+        var converted = StripOuterParentheses(expression);
 
         // Convert identifier quotes
         converted = ConvertIdentifierQuotes(converted, source, target);
@@ -316,6 +331,93 @@ public class SqlDialectConverter : ISqlDialectConverter
         }
 
         return sql;
+    }
+
+    /// <summary>
+    /// Replaces source schema references in SQL with the target schema.
+    /// Handles both quoted (e.g., "dbo"."Table") and unquoted (e.g., dbo.Table) references.
+    /// </summary>
+    private string ReplaceSchemaReferences(string sql, string sourceSchema, string targetSchema, DatabaseDialect target)
+    {
+        var qs = target.IdentifierQuoteStart;
+        var qe = target.IdentifierQuoteEnd;
+        var quotedTarget = $"{qs}{targetSchema}{qe}";
+
+        // Replace quoted source schema references (already converted to target quote style)
+        // e.g., "dbo"."Table" → "target_schema"."Table"
+        var escapedQs = Regex.Escape(qs);
+        var escapedQe = Regex.Escape(qe);
+        var quotedPattern = $"{escapedQs}{Regex.Escape(sourceSchema)}{escapedQe}\\s*\\.";
+        sql = Regex.Replace(sql, quotedPattern, $"{quotedTarget}.", RegexOptions.IgnoreCase);
+
+        // Replace unquoted source schema references
+        // e.g., dbo.Table → "target_schema".Table
+        var unquotedPattern = $@"\b{Regex.Escape(sourceSchema)}\s*\.";
+        sql = Regex.Replace(sql, unquotedPattern, $"{quotedTarget}.", RegexOptions.IgnoreCase);
+
+        return sql;
+    }
+
+    /// <summary>
+    /// Replaces source table names in SQL with their target equivalents.
+    /// Handles both quoted and unquoted identifiers. Longer names are replaced first
+    /// to avoid partial matches (e.g., "OrderDetails" before "Order").
+    /// </summary>
+    private static string ReplaceTableNames(string sql, Dictionary<string, string> tableNameMap, DatabaseDialect target)
+    {
+        var qs = target.IdentifierQuoteStart;
+        var qe = target.IdentifierQuoteEnd;
+        var escapedQs = Regex.Escape(qs);
+        var escapedQe = Regex.Escape(qe);
+
+        // Sort by source name length descending to avoid partial replacements
+        foreach (var (sourceName, targetName) in tableNameMap.OrderByDescending(kv => kv.Key.Length))
+        {
+            if (sourceName == targetName) continue;
+
+            var quotedTarget = $"{qs}{targetName}{qe}";
+
+            // Replace quoted references: "Employees" → `employees`
+            var quotedPattern = $"{escapedQs}{Regex.Escape(sourceName)}{escapedQe}";
+            sql = Regex.Replace(sql, quotedPattern, quotedTarget, RegexOptions.IgnoreCase);
+
+            // Replace unquoted references: Employees → `employees`
+            // Use word boundary to avoid replacing partial matches within other identifiers
+            var unquotedPattern = $@"\b{Regex.Escape(sourceName)}\b";
+            sql = Regex.Replace(sql, unquotedPattern, quotedTarget, RegexOptions.IgnoreCase);
+        }
+
+        return sql;
+    }
+
+    /// <summary>
+    /// Strips matching outer wrapper parentheses from SQL expressions.
+    /// Handles SQL Server's convention of wrapping defaults like (GETDATE()), ((0)), ('Pending').
+    /// Only strips when outer parens are balanced wrappers, preserving function call syntax.
+    /// </summary>
+    private static string StripOuterParentheses(string expression)
+    {
+        var result = expression.Trim();
+        while (result.Length >= 2 && result[0] == '(' && result[^1] == ')')
+        {
+            var inner = result[1..^1];
+            int depth = 0;
+            bool balanced = true;
+            foreach (char c in inner)
+            {
+                if (c == '(') depth++;
+                else if (c == ')')
+                {
+                    depth--;
+                    if (depth < 0) { balanced = false; break; }
+                }
+            }
+            if (balanced && depth == 0)
+                result = inner.Trim();
+            else
+                break;
+        }
+        return result;
     }
 
     private DatabaseDialect GetDialect(string dbName)

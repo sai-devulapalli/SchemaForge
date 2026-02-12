@@ -22,7 +22,9 @@ public interface ISchemaWriter
     /// <param name="connectionString">Connection string for target database.</param>
     /// <param name="schemaName">Target schema name.</param>
     /// <param name="views">List of view schemas to create.</param>
-    Task CreateViewsAsync(string connectionString, string schemaName, List<ViewSchema> views);
+    /// <param name="sourceTables">Source tables for building name mappings in view definitions.</param>
+    Task CreateViewsAsync(string connectionString, string schemaName, List<ViewSchema> views,
+        List<TableSchema>? sourceTables = null);
 
     /// <summary>
     /// Creates indexes on tables in the target database.

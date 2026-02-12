@@ -12,8 +12,13 @@ public interface ISqlDialectConverter
     /// <param name="definition">Original view SQL definition.</param>
     /// <param name="sourceDb">Source database type.</param>
     /// <param name="targetDb">Target database type.</param>
+    /// <param name="sourceSchema">Source schema name to replace (e.g., "dbo").</param>
+    /// <param name="targetSchema">Target schema name to use as replacement.</param>
+    /// <param name="tableNameMap">Optional mapping of source table names to target table names.</param>
     /// <returns>Converted SQL definition for target database.</returns>
-    string ConvertViewDefinition(string definition, string sourceDb, string targetDb);
+    string ConvertViewDefinition(string definition, string sourceDb, string targetDb,
+        string? sourceSchema = null, string? targetSchema = null,
+        Dictionary<string, string>? tableNameMap = null);
 
     /// <summary>
     /// Converts a CHECK constraint expression between database dialects.

@@ -274,6 +274,7 @@ public class SqlServerSchemaReader(ILogger<SqlServerSchemaReader> logger) : ISch
                 AND t.name = @TableName
                 AND i.is_hypothetical = 0
                 AND i.type > 0
+                AND i.is_unique_constraint = 0
             """;
 
         await using var cmd = new SqlCommand(query, connection);
@@ -452,14 +453,16 @@ public class SqlServerSchemaReader(ILogger<SqlServerSchemaReader> logger) : ISch
 
         // Get Default Constraints
         var defaultQuery = """
-            SELECT 
+            SELECT
                 dc.name AS constraint_name,
                 c.name AS column_name,
-                dc.definition
+                dc.definition,
+                tp.name AS data_type
             FROM sys.default_constraints dc
             INNER JOIN sys.columns c ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
             INNER JOIN sys.tables t ON dc.parent_object_id = t.object_id
             INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+            INNER JOIN sys.types tp ON c.user_type_id = tp.user_type_id
             WHERE s.name = @Schema AND t.name = @TableName
             """;
 
@@ -477,7 +480,8 @@ public class SqlServerSchemaReader(ILogger<SqlServerSchemaReader> logger) : ISch
                 SchemaName = schema,
                 Type = ConstraintType.Default,
                 Columns = new List<string> { defaultReader.GetString(1) },
-                DefaultExpression = defaultReader.GetString(2)
+                DefaultExpression = defaultReader.GetString(2),
+                ColumnDataType = defaultReader.GetString(3)
             });
         }
 

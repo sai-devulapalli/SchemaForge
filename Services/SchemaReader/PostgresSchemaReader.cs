@@ -154,6 +154,16 @@
     {
         var constraints = new List<ConstraintSchema>();
         
+        constraints.AddRange(await GetCheckAndUniqueConstraintsAsync(connection, schema, tableName));
+        constraints.AddRange(await GetDefaultConstraintsAsync(connection, schema, tableName));
+
+        return constraints;
+    }
+
+    private async Task<List<ConstraintSchema>> GetCheckAndUniqueConstraintsAsync(NpgsqlConnection connection, string schema, string tableName)
+    {
+        var constraints = new List<ConstraintSchema>();
+        
         var query = """
             SELECT 
                 c.conname,
@@ -202,17 +212,25 @@
             });
         }
 
+        return constraints;
+    }
+
+    private async Task<List<ConstraintSchema>> GetDefaultConstraintsAsync(NpgsqlConnection connection, string schema, string tableName)
+    {
+        var constraints = new List<ConstraintSchema>();
+
         // Get DEFAULT constraints separately
         var defaultQuery = """
-            SELECT 
+            SELECT
                 'df_' || a.attname AS constraint_name,
                 a.attname AS column_name,
-                pg_get_expr(d.adbin, d.adrelid) AS default_value
+                pg_get_expr(d.adbin, d.adrelid) AS default_value,
+                format_type(a.atttypid, a.atttypmod) AS data_type
             FROM pg_attrdef d
             JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
             JOIN pg_class t ON t.oid = a.attrelid
             JOIN pg_namespace n ON n.oid = t.relnamespace
-            WHERE n.nspname = @Schema 
+            WHERE n.nspname = @Schema
                 AND t.relname = @TableName
             """;
 
@@ -230,7 +248,8 @@
                 SchemaName = schema,
                 Type = ConstraintType.Default,
                 Columns = new List<string> { defaultReader.GetString(1) },
-                DefaultExpression = defaultReader.GetString(2)
+                DefaultExpression = defaultReader.GetString(2),
+                ColumnDataType = defaultReader.GetString(3)
             });
         }
 

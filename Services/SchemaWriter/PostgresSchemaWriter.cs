@@ -49,9 +49,12 @@ public class PostgresSchemaWriter(ILogger<PostgresSchemaWriter> logger,
     /// <summary>
     /// Creates views in PostgreSQL with converted SQL definitions.
     /// </summary>
-    public async Task CreateViewsAsync(string connectionString, string schemaName, List<ViewSchema> views)
+    public async Task CreateViewsAsync(string connectionString, string schemaName, List<ViewSchema> views,
+        List<TableSchema>? sourceTables = null)
     {
         logger.LogInformation("Creating PostgreSQL views...");
+
+        var tableNameMap = BuildTableNameMap(sourceTables);
 
         NpgsqlConnection? connection = null;
         if (!sqlCollector.IsCollecting)
@@ -71,7 +74,10 @@ public class PostgresSchemaWriter(ILogger<PostgresSchemaWriter> logger,
                 var convertedDefinition = dialectConverter.ConvertViewDefinition(
                     view.Definition,
                     sourceDb,
-                    DatabaseTypes.PostgreSql
+                    DatabaseTypes.PostgreSql,
+                    view.SchemaName,
+                    schemaName,
+                    tableNameMap
                 );
                 var sql = $"CREATE OR REPLACE VIEW {fullViewName} AS {convertedDefinition}";
 
@@ -194,7 +200,7 @@ public async Task CreateConstraintsAsync(string connectionString, string schemaN
             {
                 ConstraintType.Check => GenerateCheckConstraint(fullTableName, constraintName, constraint.CheckExpression!),
                 ConstraintType.Unique => GenerateUniqueConstraint(fullTableName, constraintName, constraint.Columns),
-                ConstraintType.Default => GenerateDefaultConstraint(fullTableName, constraintName, constraint.Columns[0], constraint.DefaultExpression!),
+                ConstraintType.Default => GenerateDefaultConstraint(fullTableName, constraintName, constraint.Columns[0], constraint.DefaultExpression!, constraint.ColumnDataType),
                 _ => ""
             };
 
@@ -239,10 +245,10 @@ private string GenerateUniqueConstraint(string tableName, string constraintName,
     return $"ALTER TABLE {tableName} ADD CONSTRAINT \"{constraintName}\" UNIQUE ({columnList})";
 }
 
-private string GenerateDefaultConstraint(string tableName, string constraintName, string columnName, string defaultExpression)
+private string GenerateDefaultConstraint(string tableName, string constraintName, string columnName, string defaultExpression, string? columnDataType)
 {
     var convertedColumn = namingConverter.Convert(columnName);
-    var convertedExpression = ConvertDefaultExpression(defaultExpression);
+    var convertedExpression = ConvertDefaultExpression(defaultExpression, columnDataType);
     return $"ALTER TABLE {tableName} ALTER COLUMN \"{convertedColumn}\" SET DEFAULT {convertedExpression}";
 }
 
@@ -262,24 +268,62 @@ private string ConvertCheckExpression(string expression)
     {
         cleaned = cleaned.Substring(5).Trim();
     }
-    cleaned = cleaned.Trim('(', ')');
-    
-    // Convert SQL Server functions to PostgreSQL
+    cleaned = StripOuterParentheses(cleaned);
+
+    // Convert SQL Server bracket quoting to PostgreSQL double-quote
     cleaned = cleaned.Replace("[", "\"").Replace("]", "\"");
-    
+
     return cleaned;
 }
 
-private string ConvertDefaultExpression(string expression)
+private string ConvertDefaultExpression(string expression, string? columnDataType = null)
 {
-    // Convert SQL Server defaults to PostgreSQL
-    var cleaned = expression.Trim('(', ')');
-    
-    cleaned = cleaned.Replace("GETDATE()", "NOW()");
-    cleaned = cleaned.Replace("NEWID()", "gen_random_uuid()");
+    var cleaned = StripOuterParentheses(expression);
+
+    // Convert boolean defaults: bit/boolean columns with 1/0 → TRUE/FALSE
+    if (IsBooleanType(columnDataType))
+    {
+        if (cleaned == "1") return "TRUE";
+        if (cleaned == "0") return "FALSE";
+    }
+
+    cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\bGETDATE\(\)", "NOW()", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\bNEWID\(\)", "gen_random_uuid()", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     cleaned = cleaned.Replace("N'", "'");
-    
+
     return cleaned;
+}
+
+private static bool IsBooleanType(string? dataType)
+{
+    if (string.IsNullOrEmpty(dataType)) return false;
+    var dt = dataType.Trim().ToLowerInvariant();
+    return dt == "bit" || dt == "boolean" || dt == "bool" || dt == "tinyint(1)";
+}
+
+private static string StripOuterParentheses(string expression)
+{
+    var result = expression.Trim();
+    while (result.Length >= 2 && result[0] == '(' && result[^1] == ')')
+    {
+        var inner = result[1..^1];
+        int depth = 0;
+        bool balanced = true;
+        foreach (char c in inner)
+        {
+            if (c == '(') depth++;
+            else if (c == ')')
+            {
+                depth--;
+                if (depth < 0) { balanced = false; break; }
+            }
+        }
+        if (balanced && depth == 0)
+            result = inner.Trim();
+        else
+            break;
+    }
+    return result;
 }
     private async Task CreateSchemaIfNotExistsAsync(NpgsqlConnection? connection, string schemaName)
     {
@@ -456,5 +500,24 @@ private string ConvertDefaultExpression(string expression)
         cmd.Parameters.AddWithValue("fkName", fkName);
 
         return Convert.ToBoolean(await cmd.ExecuteScalarAsync());
+    }
+
+    private Dictionary<string, string>? BuildTableNameMap(List<TableSchema>? sourceTables)
+    {
+        if (sourceTables == null || sourceTables.Count == 0) return null;
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var table in sourceTables)
+        {
+            var convertedTable = namingConverter.Convert(table.TableName);
+            if (table.TableName != convertedTable)
+                map[table.TableName] = convertedTable;
+            foreach (var col in table.Columns)
+            {
+                var convertedCol = namingConverter.Convert(col.ColumnName);
+                if (col.ColumnName != convertedCol && !map.ContainsKey(col.ColumnName))
+                    map[col.ColumnName] = convertedCol;
+            }
+        }
+        return map.Count > 0 ? map : null;
     }
 }
