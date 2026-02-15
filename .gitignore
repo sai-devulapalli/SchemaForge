@@ -46,7 +46,7 @@ Desktop.ini
 .LSOverride
 
 # Claude Code
-.claude/settings.local.json
+.claude/
 
 # Secrets and configuration
 appsettings.json
