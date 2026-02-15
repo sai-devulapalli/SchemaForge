@@ -495,6 +495,35 @@ See [TESTING.md](TESTING.md) for the full testing guide.
 - `Microsoft.Extensions.Options.ConfigurationExtensions` - Options configuration support
 - `System.CommandLine` - Command-line argument parsing
 
+## Comparison with Other Tools
+
+| Feature | SchemaForge | Flyway | Liquibase | EF Migrations | pgloader |
+|---------|:-----------:|:------:|:---------:|:-------------:|:--------:|
+| Cross-database schema migration | 4 DBs, any-to-any | No | No | Limited | PostgreSQL target only |
+| Cross-database data migration | Batched bulk transfer | No | No | No | Yes |
+| View migration with dialect conversion | Yes | No | No | No | No |
+| Index & constraint migration | Yes | Manual SQL | Manual XML/SQL | Auto (EF models) | Partial |
+| Naming convention auto-conversion | Yes (per-target) | No | No | No | No |
+| Data type mapping | Automatic, 4-way | N/A | N/A | EF-managed | PostgreSQL only |
+| Dry run / SQL preview | Yes | Yes | Yes | SQL scripts | No |
+| Version-controlled migrations | No | Yes | Yes | Yes | No |
+| Rollback support | No | Yes | Yes | Yes | No |
+| Fluent API | Yes | No | No | Yes | No |
+| CLI tool | Yes | Yes | Yes | dotnet CLI | Yes |
+| No JVM required | .NET only | Java | Java | .NET only | C |
+
+**When to use SchemaForge:**
+- Migrating an existing database from one vendor to another (e.g., SQL Server to PostgreSQL)
+- One-time or periodic cross-database migrations with schema + data
+- Generating migration SQL scripts for review before execution (dry run)
+
+**When to use Flyway/Liquibase:**
+- Managing incremental schema changes over time within the same database
+- Version-controlled, team-based database change management
+
+**When to use EF Migrations:**
+- You're already using Entity Framework and want code-first schema management
+
 ## Limitations
 
 - Stored procedures, functions, and triggers are not migrated
