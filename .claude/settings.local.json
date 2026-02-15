@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(timeout 5 nc:*)"
+      "Bash(timeout 5 nc:*)",
+      "Bash(docker:*)",
+      "Bash(./tests/run-tests.sh:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet run:*)"
     ]
   }
 }

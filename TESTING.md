@@ -3,7 +3,111 @@
 
 ## Overview
 
-SchemaForge uses end-to-end integration tests to validate all 12 cross-database migration paths across 4 supported databases: **SQL Server**, **PostgreSQL**, **MySQL**, and **Oracle**. The tests run against real database instances in Docker containers.
+SchemaForge has comprehensive test coverage at two levels:
+
+- **Unit Tests** (283 tests) - Fast, no database required. Covers core services, builders, SQL generation, provider registration, and orchestration logic.
+- **Integration Tests** (19 tests) - All 12 cross-database migration paths running against real databases in Docker containers.
+
+## Unit Tests
+
+### Quick Start
+
+```bash
+# Run all unit tests
+dotnet test tests/SchemaForge.Tests/
+
+# Run with verbose output
+dotnet test tests/SchemaForge.Tests/ -v normal
+
+# Run a specific test class
+dotnet test tests/SchemaForge.Tests/ --filter "FullyQualifiedName~SqlDialectConverterTests"
+
+# Run with code coverage
+dotnet test tests/SchemaForge.Tests/ --collect:"XPlat Code Coverage"
+```
+
+### Test Suite Summary
+
+| Test File | Tests | What It Covers |
+|-----------|-------|----------------|
+| `UniversalDataTypeMapperTests` | 39 | Cross-database type mapping for all 4 DB targets |
+| `TableDependencySorterTests` | 22 | FK dependency topological sorting |
+| `SnakeCaseConverterTests` | 13 | Naming convention conversion |
+| `SqlCollectorTests` | 12 | Dry run SQL accumulation and script generation |
+| `SqlDialectConverterTests` | 39 | SQL expression conversion across dialects |
+| `DatabaseStandardsProviderTests` | 8 | DB convention lookups (naming, quoting, identity) |
+| `DbMigrateTests` | 7 | Static fluent API entry points |
+| `MigrationBuilderTests` | 30 | Fluent builder configuration and validation |
+| `PostgresSchemaWriterTests` | 14 | PostgreSQL DDL generation |
+| `SqlServerSchemaWriterTests` | 12 | SQL Server DDL generation |
+| `MySqlSchemaWriterTests` | 10 | MySQL DDL generation |
+| `OracleSchemaWriterTests` | 10 | Oracle DDL generation |
+| `ProviderRegistrationTests` | 8 | Plugin keyed DI registration |
+| `AssemblyPluginLoaderTests` | 3 | Runtime plugin discovery |
+| `MigrationOrchestratorTests` | 12 | Workflow orchestration, option flags, error handling |
+| `BulkDataMigratorTests` | 14 | Batched data transfer, dry run INSERT generation |
+| **Total** | **283** | |
+
+### Testing Patterns
+
+#### SqlCollector-Based SchemaWriter Testing
+
+SchemaWriter classes can be tested without any database connection by passing `SqlCollector(isCollecting: true)`. The writer generates SQL into the collector instead of executing it, and tests inspect the collected statements:
+
+```csharp
+var sqlCollector = new SqlCollector(isCollecting: true);
+var writer = new PostgresSchemaWriter(logger, namingConverter, dataTypeMapper, dialectConverter, sqlCollector);
+
+await writer.CreateSchemaAsync("", "public", tables);
+
+var tableSql = sqlCollector.GetStatements().First(s => s.Category == "Tables").Sql;
+Assert.Contains("CREATE TABLE", tableSql);
+```
+
+#### Shared Test Helpers
+
+`tests/SchemaForge.Tests/Helpers/TestDataBuilders.cs` provides two helper classes:
+
+**`TestServices`** - Factory methods for creating properly-configured service instances:
+- `CreateSnakeCaseConverter(targetDb)` - With `IOptions<MigrationSettings>` and `IDatabaseStandardsProvider`
+- `CreateDataTypeMapper()` - With mock `ILogger`
+- `CreateDependencySorter()` - With mock `ILogger`
+
+**`TestData`** - Factory methods for creating test schema objects:
+- `TestData.Table(name, schema, columns, primaryKeys, foreignKeys)`
+- `TestData.Column(name, dataType, nullable, identity, maxLength, ...)`
+- `TestData.ForeignKey(name, column, refTable, refColumn)`
+- `TestData.Index(name, table, isUnique, isClustered, columns, ...)`
+- `TestData.View(name, schema, definition)`
+- `TestData.Constraint(name, table, schema, type, columns, ...)`
+
+#### Mocking with Moq
+
+Orchestration and data migration tests use Moq to mock `ISchemaReader`, `ISchemaWriter`, `IDataReader`, and `IDataWriter` interfaces. This isolates the orchestration logic from database-specific behavior:
+
+```csharp
+var mockReader = new Mock<ISchemaReader>();
+mockReader.Setup(r => r.ReadTablesAsync(It.IsAny<string>()))
+    .ReturnsAsync(tables);
+
+var orchestrator = new MigrationOrchestrator(logger, mockReader.Object, ...);
+```
+
+### What Unit Tests Do NOT Cover
+
+The following require real database connections and are covered by integration tests:
+- `SchemaReader` implementations (SQL queries against `sys.tables`, `pg_catalog`, etc.)
+- `DataReader` implementations (fetching actual rows)
+- `DataWriter` implementations (bulk insert, constraint toggling)
+- `Program.cs` (CLI entry point)
+
+---
+
+## Integration Tests
+
+### Overview
+
+Integration tests validate all 12 cross-database migration paths across 4 supported databases: **SQL Server**, **PostgreSQL**, **MySQL**, and **Oracle**. The tests run against real database instances in Docker containers.
 
 ## Prerequisites
 

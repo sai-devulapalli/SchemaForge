@@ -276,7 +276,7 @@ run_migration() {
     local source="$1" target="$2" log_file="$3" full="${4:-false}"
     build_cli_args "$source" "$target" "$full"
     local exit_code=0
-    (cd "$PROJECT_DIR" && dotnet run -- "${CLI_ARGS[@]}" 2>&1) | tee "$log_file" || exit_code=$?
+    (dotnet run --project "$PROJECT_DIR/src/SchemaForge.Cli" -- "${CLI_ARGS[@]}" 2>&1) | tee "$log_file" || exit_code=$?
     return $exit_code
 }
 
@@ -624,7 +624,7 @@ run_test() {
         clean_db "$source"
         build_cli_args "sqlserver" "$source"
         local seed_log="$LOG_DIR/seed_${source}.log"
-        if ! (cd "$PROJECT_DIR" && dotnet run -- "${CLI_ARGS[@]}" 2>&1) > "$seed_log" 2>&1; then
+        if ! (dotnet run --project "$PROJECT_DIR/src/SchemaForge.Cli" -- "${CLI_ARGS[@]}" 2>&1) > "$seed_log" 2>&1; then
             fail "$label (could not seed $source, see $seed_log)"
             return
         fi
@@ -713,7 +713,7 @@ main() {
             clean_db "$target"
             local dv_log="$LOG_DIR/dataval_sqlserver_to_${target}.log"
             build_cli_args "sqlserver" "$target"
-            (cd "$PROJECT_DIR" && dotnet run -- "${CLI_ARGS[@]}" 2>&1) > "$dv_log" 2>&1
+            (dotnet run --project "$PROJECT_DIR/src/SchemaForge.Cli" -- "${CLI_ARGS[@]}" 2>&1) > "$dv_log" 2>&1
         fi
         validate_data_values "$target"
     done

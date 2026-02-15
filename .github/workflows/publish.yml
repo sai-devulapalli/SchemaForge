@@ -1,0 +1,42 @@
+name: Publish to NuGet
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore SchemaForge.sln
+
+      - name: Build
+        run: dotnet build SchemaForge.sln --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test tests/SchemaForge.Tests --no-build --configuration Release --verbosity normal
+
+      - name: Pack
+        run: dotnet pack SchemaForge.sln --no-build --configuration Release --output ./nupkg
+
+      - name: Publish SchemaForge (library) to NuGet
+        run: dotnet nuget push ./nupkg/SchemaForge.*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Publish SchemaForge.Cli (tool) to NuGet
+        run: dotnet nuget push ./nupkg/SchemaForge.Cli.*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: ./nupkg/*.nupkg

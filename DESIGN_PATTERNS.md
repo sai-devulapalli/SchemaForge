@@ -35,7 +35,28 @@ Program.cs (ParseResult)         MigrationBuilder (Builder + Fluent Interface)
 
 ## Design Patterns Used
 
-### 1. Builder Pattern
+### 1. Plugin Pattern
+**Interface:** `IDatabaseProvider`
+**Loader:** `AssemblyPluginLoader`
+
+Database support is implemented as self-registering plugins. Each provider assembly contains an `IDatabaseProvider` implementation that registers its services with the DI container. `AssemblyPluginLoader` scans loaded assemblies at runtime to discover all providers. Adding a new database requires only a new provider assembly - no changes to core code.
+
+```csharp
+public class PostgresProvider : IDatabaseProvider
+{
+    public string ProviderKey => "postgres";
+
+    public void Register(IServiceCollection services)
+    {
+        services.AddKeyedTransient<ISchemaReader, PostgresSchemaReader>(ProviderKey);
+        services.AddKeyedTransient<ISchemaWriter, PostgresSchemaWriter>(ProviderKey);
+        services.AddKeyedTransient<IDataReader, PostgresDataReader>(ProviderKey);
+        services.AddKeyedTransient<IDataWriter, PostgresDataWriter>(ProviderKey);
+    }
+}
+```
+
+### 2. Builder Pattern
 **Class:** `MigrationBuilder`
 
 Separates construction of a complex migration configuration from its execution. Accumulates settings in `_settings` and `_options`, then builds the full service graph on `ExecuteAsync()`.
@@ -49,17 +70,17 @@ DbMigrate.FromSqlServer("...")
     .ExecuteAsync();
 ```
 
-### 2. Static Factory Pattern
+### 3. Static Factory Pattern
 **Class:** `DbMigrate`
 
 Provides a static entry point that hides `MigrationBuilder` construction. Offers convenience methods like `FromSqlServer()`, `FromPostgres()` that return a builder instance.
 
-### 3. Fluent Interface Pattern
+### 4. Fluent Interface Pattern
 **Class:** `MigrationBuilder`
 
 Every configuration method returns `this`, enabling method chaining for readable, expressive configuration.
 
-### 4. Strategy Pattern
+### 5. Strategy Pattern
 **Interfaces:** `ISchemaReader`, `ISchemaWriter`, `IDataReader`, `IDataWriter`, `INamingConverter`
 
 This pattern is implemented via **keyed Dependency Injection (DI) services**. Each database-specific implementation of a strategy (e.g., `PostgresSchemaWriter`, `SqlServerSchemaWriter`) is registered with a unique key corresponding to the database type (e.g., "postgres", "sqlserver").
@@ -80,7 +101,7 @@ This is used for all core database interactions:
 - `IDataReader`: Reading source data.
 - `IDataWriter`: Writing target data.
 
-### 5. Adapter Pattern
+### 6. Adapter Pattern
 **Interfaces:** `IDataTypeMapper`, `ISqlDialectConverter`
 
 Converts (adapts) between incompatible database-specific formats:
@@ -89,30 +110,30 @@ Converts (adapts) between incompatible database-specific formats:
 
 Also, each `ISchemaReader` acts as an adapter - converting database-specific metadata queries into the common `TableSchema` model.
 
-### 6. Orchestrator Pattern
+### 7. Orchestrator Pattern
 **Class:** `MigrationOrchestrator`
 
 Coordinates the multi-step migration workflow in the correct order, managing dependencies between steps:
 1. Read schema -> 2. Create tables -> 3. Migrate data -> 4. Create indexes -> 5. Create constraints -> 6. Create views
 
-### 7. Options Pattern
+### 8. Options Pattern
 **Classes:** `MigrationSettings`, `MigrationOptions`, `DryRunOptions`
 
 Configuration bound to strongly-typed classes via `IOptions<T>`, following the Microsoft.Extensions.Options pattern.
 
-### 8. Dependency Injection
+### 9. Dependency Injection
 **Location:** `MigrationBuilder.BuildServiceProvider()`, `Program.cs`
 
 All services registered and resolved via `IServiceProvider`. Uses keyed services for database-specific implementations. Two entry points build the DI container:
 - **CLI path** (`Program.cs`): `System.CommandLine` parses args, merges with `appsettings.json` fallbacks, builds `ServiceCollection` manually.
 - **Fluent API path** (`MigrationBuilder`): Builder accumulates settings, builds `ServiceCollection` in `ExecuteAsync()`.
 
-### 9. Collector Pattern
+### 10. Collector Pattern
 **Interface:** `ISqlCollector`
 
 Accumulates SQL statements during dry run mode for later output. Conditionally active based on `IsCollecting` flag.
 
-### 10. Provider Pattern
+### 11. Provider Pattern
 **Interface:** `IDatabaseStandardsProvider`
 
 Supplies database-specific conventions (naming rules, reserved keywords, identifier limits) without performing operations.

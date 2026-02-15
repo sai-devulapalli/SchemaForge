@@ -77,8 +77,14 @@ await DbMigrate
 
 ```bash
 dotnet pack
-dotnet tool install --global --add-source ./nupkg SchemaForge
+dotnet tool install --global --add-source ./nupkg SchemaForge.Cli
 schemaforge --help
+```
+
+### Use as a library in your .NET app
+
+```bash
+dotnet add package SchemaForge
 ```
 
 ## CLI Usage
@@ -199,11 +205,11 @@ Connection strings also support environment variable substitution (e.g., `${SOUR
 
 ```bash
 # Via CLI arguments
-dotnet run -- --from sqlserver --to postgres \
+dotnet run --project SchemaForge.Cli -- --from sqlserver --to postgres \
   --source-conn "Server=localhost;..." --target-conn "Host=localhost;..."
 
 # Via appsettings.json (fallback when no CLI args provided)
-dotnet run
+dotnet run --project SchemaForge.Cli
 ```
 
 ### Predefined Migration Presets
@@ -421,47 +427,53 @@ When `NamingConvention` is set to `auto`, identifiers are converted to match tar
 
 ```
 SchemaForge/
-├── Builder/
-│   ├── DbMigrate.cs               # Static fluent API entry point
-│   └── MigrationBuilder.cs        # Fluent builder implementation
-├── Configuration/
-│   └── MigrationSettings.cs       # Configuration model
-├── Models/
-│   ├── ColumnSchema.cs            # Column definition
-│   ├── TableSchema.cs             # Table definition
-│   ├── ForeignKeySchema.cs        # Foreign key definition
-│   ├── Schemas.cs                 # Index, View, Constraint schemas
-│   ├── DatabaseDialect.cs         # SQL dialect definitions
-│   ├── MigrationOptions.cs        # Migration options
-│   ├── DryRunOptions.cs           # Dry run configuration
-│   └── DryRunResult.cs            # Dry run output model
-├── Services/
-│   ├── Interfaces/                # Service contracts
-│   ├── SchemaReader/              # Read schema from databases
-│   ├── SchemaWriter/              # Write schema to databases
-│   ├── DataReader/                # Read data from databases
-│   ├── DataWriter/                # Write data to databases
-│   ├── MigrationOrchestrator.cs   # Main migration coordinator
-│   ├── BulkDataMigrator.cs        # Data migration service
-│   ├── TableDependencySorter.cs   # FK dependency ordering
-│   ├── SnakeCaseConverter.cs      # Naming conversion
-│   ├── UniversalDataTypeMapper.cs # Type mapping
-│   ├── SqlDialectConverter.cs     # SQL expression conversion
-│   ├── SqlCollector.cs            # Dry run SQL collector
-│   └── DatabaseStandardsProvider.cs # DB conventions
-├── Examples/                      # Usage examples
-├── Program.cs                     # Entry point & DI setup
-├── SchemaForge.csproj             # Project file
-├── appsettings.json               # Configuration
-├── appsettings.template.json      # Configuration template
-└── DESIGN_PATTERNS.md             # Architecture & design documentation
+├── src/
+│   ├── SchemaForge.Abstractions/      # Interfaces, models, contracts
+│   ├── SchemaForge/                   # Core library (orchestration, shared services)
+│   │   ├── Builder/                   # Fluent API (DbMigrate, MigrationBuilder)
+│   │   └── Services/                  # Orchestrator, type mapper, naming, etc.
+│   ├── SchemaForge.Cli/              # CLI entry point (System.CommandLine)
+│   └── SchemaForge.Providers.*/      # Database plugins (self-registering)
+│       ├── SchemaForge.Providers.SqlServer/
+│       ├── SchemaForge.Providers.Postgres/
+│       ├── SchemaForge.Providers.MySql/
+│       └── SchemaForge.Providers.Oracle/
+├── tests/
+│   ├── SchemaForge.Tests/            # Unit tests (xUnit + Moq)
+│   ├── run-tests.sh                  # Integration test runner (Docker)
+│   └── seed-sqlserver.sql            # Integration test seed data
+├── SchemaForge.sln
+├── docker-compose.test.yml           # Integration test containers
+├── ARCHITECTURE.md                   # Architecture documentation
+├── DESIGN_PATTERNS.md                # Design patterns documentation
+├── TESTING.md                        # Testing guide
+└── LICENSE                           # MIT License
 ```
 
 ## Architecture
 
-SchemaForge uses a strategy-based architecture with keyed dependency injection. Each database has dedicated implementations for schema reading, schema writing, data reading, and data writing. The `MigrationOrchestrator` coordinates the full migration workflow.
+SchemaForge uses a **plugin-based architecture** with keyed dependency injection. Database-specific implementations live in separate provider assemblies (`SchemaForge.Providers.*`) that self-register via `IDatabaseProvider`. The core library contains no database-specific code. `AssemblyPluginLoader` discovers providers at runtime, and `MigrationOrchestrator` coordinates the 6-step migration workflow.
 
-For a detailed breakdown of design patterns and architectural decisions, see [DESIGN_PATTERNS.md](DESIGN_PATTERNS.md).
+For detailed documentation:
+- [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture, plugin system, data flow
+- [DESIGN_PATTERNS.md](DESIGN_PATTERNS.md) - Design patterns and technical decisions
+- [TESTING.md](TESTING.md) - Unit and integration testing guide
+
+## Testing
+
+SchemaForge has comprehensive test coverage at two levels:
+
+**Unit Tests** (283 tests) - Run instantly, no database required:
+```bash
+dotnet test tests/SchemaForge.Tests/
+```
+
+**Integration Tests** (19 tests) - All 12 cross-database migration paths with Docker:
+```bash
+bash tests/run-tests.sh
+```
+
+See [TESTING.md](TESTING.md) for the full testing guide.
 
 ## Requirements
 
@@ -490,6 +502,5 @@ For a detailed breakdown of design patterns and architectural decisions, see [DE
 - Some complex view definitions may need manual adjustment
 - Circular foreign key dependencies are handled but may require manual verification
 
-## License
 
-MIT License
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
