@@ -2,36 +2,28 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["main"]
   pull_request:
-    branches: [main]
+    branches: ["main"]
 
 jobs:
-  build-and-test:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v3
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '9.0.x'
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 9.0.x
 
-      - name: Restore dependencies
-        run: dotnet restore SchemaForge.sln
+    - name: Restore dependencies
+      run: dotnet restore
 
-      - name: Build
-        run: dotnet build SchemaForge.sln --no-restore --configuration Release
+    - name: Build
+      run: dotnet build --no-restore --configuration Release
 
-      - name: Test
-        run: dotnet test tests/SchemaForge.Tests --no-build --configuration Release --verbosity normal
-
-      - name: Pack
-        run: dotnet pack SchemaForge.sln --no-build --configuration Release --output ./nupkg
-
-      - name: Upload packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: nuget-packages
-          path: ./nupkg/*.nupkg
+    - name: Run tests
+      run: dotnet test --no-build --configuration Release
