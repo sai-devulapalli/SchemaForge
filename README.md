@@ -1,4 +1,4 @@
-![Build](https://github.com/<org>/<repo>/actions/workflows/ci.yml/badge.svg)
+![Build](https://github.com/sai-devulapalli/SchemaForge/actions/workflows/ci.yml/badge.svg?branch=main)
 ![NuGet](https://img.shields.io/nuget/v/SchemaForge)
 ![NuGet Downloads](https://img.shields.io/nuget/dt/SchemaForge)
 ![License](https://img.shields.io/github/license/<org>/<repo>)
