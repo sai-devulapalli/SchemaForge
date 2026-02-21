@@ -524,6 +524,14 @@ See [TESTING.md](TESTING.md) for the full testing guide.
 **When to use EF Migrations:**
 - You're already using Entity Framework and want code-first schema management
 
+## What SchemaForge Is NOT
+
+- **Not an ORM** - SchemaForge does not map database tables to objects or generate entity classes. Use Entity Framework, Dapper, or NHibernate for that.
+- **Not a version-controlled migration tool** - It does not track incremental schema changes over time like Flyway or Liquibase. It performs point-in-time cross-database migrations.
+- **Not a replication tool** - It does not provide continuous sync or change-data-capture between databases. It runs one-time (or periodic) migrations.
+- **Not a backup/restore tool** - It migrates schema and data forward to a different database engine. It does not create backups or support rollback to a previous state.
+- **Not a database admin tool** - It does not manage users, permissions, tablespaces, or server configuration.
+
 ## Limitations
 
 - Stored procedures, functions, and triggers are not migrated

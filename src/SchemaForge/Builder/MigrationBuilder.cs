@@ -282,6 +282,18 @@ public class MigrationBuilder
         return this;
     }
 
+    /// <summary>
+    /// Filter the source schema read to a specific schema name.
+    /// Pass "*" to read ALL non-system schemas (useful for multi-schema databases
+    /// like WideWorldImporters that have Application, Sales, Warehouse, etc.).
+    /// Omitting this call uses SCHEMA_NAME() — the connection's default schema.
+    /// </summary>
+    public MigrationBuilder WithSourceSchema(string schemaName)
+    {
+        _settings.SourceSchemaName = schemaName;
+        return this;
+    }
+
     #endregion
 
     #region Logging
@@ -391,6 +403,7 @@ public class MigrationBuilder
             opts.UseTargetDatabaseStandards = _settings.UseTargetDatabaseStandards;
             opts.PreserveSourceCase = _settings.PreserveSourceCase;
             opts.MaxIdentifierLength = _settings.MaxIdentifierLength;
+            opts.SourceSchemaName = _settings.SourceSchemaName;
         });
 
         // Configure migration options

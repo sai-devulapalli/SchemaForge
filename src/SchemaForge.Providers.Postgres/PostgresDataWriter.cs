@@ -41,15 +41,14 @@ public class PostgresDataWriter(INamingConverter namingConverter, ILogger<Postgr
             var columns = table.Columns.Select(c => $"\"{namingConverter.Convert(c.ColumnName)}\"");
             var columnList = string.Join(", ", columns);
 
-            // Check if the table has existing rows and truncate if necessary
-            if (await TableHasRowsAsync(connection, schemaName, tableName))
-            {
-                logger.LogInformation("Truncating table {Schema}.{Table} before bulk insert.", schemaName, tableName);
-                await using var truncateCmd = new NpgsqlCommand($"TRUNCATE TABLE {fullTableName} RESTART IDENTITY CASCADE;", connection);
-                await truncateCmd.ExecuteNonQueryAsync();
-            }
+            // NOTE: No truncation here — BulkInsertAsync is called once per batch
+            // by BulkDataMigrator. Truncating on every call would delete prior batches.
+            // Target tables are freshly created by the schema migration step and are empty.
 
-            await using var writer = await connection.BeginBinaryImportAsync(
+            // Fix: Use a single `await using` scope — declaring it with `await using var`
+            // AND wrapping with `await using (writer)` caused DisposeAsync() to fire twice,
+            // which in Npgsql 10 sends COPY FAIL after COPY DONE, corrupting the connection.
+            var writer = await connection.BeginBinaryImportAsync(
                 $"COPY {fullTableName} ({columnList}) FROM STDIN (FORMAT BINARY)");
 
             await using (writer)
@@ -68,7 +67,8 @@ public class PostgresDataWriter(INamingConverter namingConverter, ILogger<Postgr
                         }
                         else
                         {
-                            await writer.WriteAsync(
+                            await WriteTypedValueAsync(
+                                writer,
                                 ConvertValue(value, column),
                                 GetNpgsqlDbType(column));
                         }
@@ -80,7 +80,9 @@ public class PostgresDataWriter(INamingConverter namingConverter, ILogger<Postgr
         }
         catch
         {
-            await transaction.RollbackAsync();
+            // Guard against ObjectDisposedException: if CompleteAsync throws and the
+            // writer's dispose corrupts the connection, RollbackAsync may throw too.
+            try { await transaction.RollbackAsync(); } catch { /* connection already broken */ }
             throw;
         }
     }
@@ -188,6 +190,45 @@ public class PostgresDataWriter(INamingConverter namingConverter, ILogger<Postgr
     }
 
     /// <summary>
+    /// Dispatches a typed WriteAsync call so Npgsql receives a concrete CLR type
+    /// rather than a boxed <c>object</c>, avoiding 22P03 binary format errors.
+    /// </summary>
+    private static async ValueTask WriteTypedValueAsync(
+        NpgsqlBinaryImporter writer,
+        object converted,
+        NpgsqlTypes.NpgsqlDbType dbType)
+    {
+        switch (converted)
+        {
+            case bool b:             await writer.WriteAsync(b,     dbType); break;
+            case short s:            await writer.WriteAsync(s,     dbType); break;
+            case int i:              await writer.WriteAsync(i,     dbType); break;
+            case long l:             await writer.WriteAsync(l,     dbType); break;
+            // Fix: when the target PG type is float8 (Double), cast to double so Npgsql 10
+            // uses the 8-byte handler rather than the 4-byte float32 handler.
+            case float f:
+                await writer.WriteAsync(
+                    dbType == NpgsqlTypes.NpgsqlDbType.Double ? (double)f : f,
+                    dbType);
+                break;
+            case double d:           await writer.WriteAsync(d,     dbType); break;
+            case decimal dec:        await writer.WriteAsync(dec,   dbType); break;
+            case string str:         await writer.WriteAsync(str,   dbType); break;
+            case DateOnly date:      await writer.WriteAsync(date,  dbType); break;
+            case DateTime dt:        await writer.WriteAsync(dt,    dbType); break;
+            case DateTimeOffset dto: await writer.WriteAsync(dto,   dbType); break;
+            case TimeOnly t:         await writer.WriteAsync(t,     dbType); break;
+            case TimeSpan ts:        await writer.WriteAsync(ts,    dbType); break;
+            case Guid g:             await writer.WriteAsync(g,     dbType); break;
+            case byte[] bytes:       await writer.WriteAsync(bytes, dbType); break;
+            default:
+                // Fallback: write as text to avoid unknown-type serialisation failures
+                await writer.WriteAsync(converted.ToString()!, NpgsqlTypes.NpgsqlDbType.Text);
+                break;
+        }
+    }
+
+    /// <summary>
     /// Converts source values to PostgreSQL-compatible types.
     /// Handles cross-database type mismatches (e.g., MySQL tinyint(1) → Boolean).
     /// </summary>
@@ -268,10 +309,4 @@ public class PostgresDataWriter(INamingConverter namingConverter, ILogger<Postgr
         };
     }
 
-    private async Task<bool> TableHasRowsAsync(NpgsqlConnection connection, string schemaName, string tableName)
-    {
-        var sql = $"SELECT EXISTS (SELECT 1 FROM {schemaName}.\"{tableName}\" LIMIT 1)";
-        await using var cmd = new NpgsqlCommand(sql, connection);
-        return Convert.ToBoolean(await cmd.ExecuteScalarAsync());
-    }
 }

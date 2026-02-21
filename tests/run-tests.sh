@@ -26,7 +26,7 @@ done
 # Connection strings (host-side ports)
 # ============================================================
 SQLSERVER_CONN='Server=localhost,1434;Database=schemaforge_test;User Id=sa;Password=SchemaForge@Test1;TrustServerCertificate=True;'
-POSTGRES_CONN='Host=localhost;Port=5433;Database=schemaforge_test;Username=postgres;Password=SchemaForgeTest1;'
+POSTGRES_CONN='Host=localhost;Port=5434;Database=schemaforge_test;Username=postgres;Password=SchemaForgeTest1;'
 MYSQL_CONN='Server=localhost;Port=3307;Database=schemaforge_test;User Id=root;Password=SchemaForgeTest1;'
 ORACLE_CONN='User Id=testuser;Password=SchemaForgeTest1;Data Source=localhost:1522/FREEPDB1;'
 
@@ -96,12 +96,12 @@ SQLCMD_PATH=""
 
 find_sqlcmd() {
     [ -n "$SQLCMD_PATH" ] && return
-    if dc exec -T sqlserver test -f /opt/mssql-tools18/bin/sqlcmd 2>/dev/null; then
-        SQLCMD_PATH="/opt/mssql-tools18/bin/sqlcmd -C"
-    elif dc exec -T sqlserver test -f /opt/mssql-tools/bin/sqlcmd 2>/dev/null; then
+    if dc exec -T sqlserver test -f /opt/mssql-tools/bin/sqlcmd 2>/dev/null; then
         SQLCMD_PATH="/opt/mssql-tools/bin/sqlcmd"
-    else
+    elif dc exec -T sqlserver test -f /opt/mssql-tools18/bin/sqlcmd 2>/dev/null; then
         SQLCMD_PATH="/opt/mssql-tools18/bin/sqlcmd -C"
+    else
+        SQLCMD_PATH="/opt/mssql-tools/bin/sqlcmd"
     fi
 }
 

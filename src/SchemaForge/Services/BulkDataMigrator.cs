@@ -51,18 +51,33 @@ public class BulkDataMigrator(
 
         // Fix #6: Wrap constraint disable/enable in try/finally for exception safety
         await dataWriter.DisableConstraintsAsync(targetConnectionString);
+        var failedTables = new List<string>();
         try
         {
             foreach (var table in tables)
             {
-                await MigrateTableDataAsync(
-                    dataReader,
-                    dataWriter,
-                    sourceConnectionString,
-                    targetConnectionString,
-                    targetSchemaName,
-                    table,
-                    batchSize);
+                try
+                {
+                    await MigrateTableDataAsync(
+                        dataReader,
+                        dataWriter,
+                        sourceConnectionString,
+                        targetConnectionString,
+                        targetSchemaName,
+                        table,
+                        batchSize);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to migrate data for table {Table}. Continuing with remaining tables.", table.TableName);
+                    failedTables.Add(table.TableName);
+                }
+            }
+
+            if (failedTables.Count > 0)
+            {
+                throw new AggregateException(
+                    $"Data migration failed for {failedTables.Count} table(s): {string.Join(", ", failedTables)}");
             }
         }
         finally

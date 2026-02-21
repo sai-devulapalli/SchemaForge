@@ -61,6 +61,12 @@ public class PostgresSchemaWriter(ILogger<PostgresSchemaWriter> logger,
         {
             connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync();
+
+            // Set search_path so unqualified table references in view bodies resolve
+            // to the correct schema, as a defensive measure.
+            await using var setPathCmd = new NpgsqlCommand(
+                $"SET search_path TO \"{schemaName}\", public", connection);
+            await setPathCmd.ExecuteNonQueryAsync();
         }
 
         try
@@ -68,7 +74,7 @@ public class PostgresSchemaWriter(ILogger<PostgresSchemaWriter> logger,
             foreach (var view in views)
             {
                 var viewName = namingConverter.Convert(view.ViewName);
-                var fullViewName = $"{schemaName}.\"{viewName}\"";
+                var fullViewName = $"\"{schemaName}\".\"{viewName}\"";
 
                 var sourceDb = dialectConverter.DetectSourceDatabase(view.Definition);
                 var convertedDefinition = dialectConverter.ConvertViewDefinition(
@@ -79,9 +85,10 @@ public class PostgresSchemaWriter(ILogger<PostgresSchemaWriter> logger,
                     schemaName,
                     tableNameMap
                 );
-                var sql = $"CREATE OR REPLACE VIEW {fullViewName} AS {convertedDefinition}";
+                var sql = $"CREATE OR REPLACE VIEW {fullViewName} AS\n{convertedDefinition}";
 
                 logger.LogInformation("Creating view: {Schema}.{View}", schemaName, viewName);
+                logger.LogDebug("View SQL for {View}:\n{Sql}", viewName, sql);
 
                 if (sqlCollector.IsCollecting)
                 {
@@ -96,7 +103,9 @@ public class PostgresSchemaWriter(ILogger<PostgresSchemaWriter> logger,
                     }
                     catch (Exception ex)
                     {
-                        logger.LogWarning(ex, "Failed to create view {ViewName}. May need manual conversion.", viewName);
+                        logger.LogWarning(
+                            "Failed to create view {ViewName}. {Error}\nGenerated SQL:\n{Sql}",
+                            viewName, ex.Message, sql);
                     }
                 }
             }
@@ -271,9 +280,89 @@ private string ConvertCheckExpression(string expression)
     cleaned = StripOuterParentheses(cleaned);
 
     // Convert SQL Server bracket quoting to PostgreSQL double-quote
-    cleaned = cleaned.Replace("[", "\"").Replace("]", "\"");
+    // This also handles converting column names to the target naming convention
+    cleaned = ConvertIdentifiersToTargetConvention(cleaned);
 
     return cleaned;
+}
+
+private string ConvertIdentifiersToTargetConvention(string expression)
+{
+    // Replace SQL Server bracket-quoted identifiers [Name] with PostgreSQL double-quoted names
+    // while also converting the name itself to the target convention (snake_case)
+    var result = new StringBuilder();
+    var i = 0;
+
+    while (i < expression.Length)
+    {
+        if (expression[i] == '[')
+        {
+            // Found a bracketed identifier, extract it
+            var endIndex = expression.IndexOf(']', i);
+            if (endIndex != -1)
+            {
+                var identifier = expression.Substring(i + 1, endIndex - i - 1);
+                var convertedIdentifier = namingConverter.Convert(identifier);
+                result.Append($"\"{convertedIdentifier}\"");
+                i = endIndex + 1;
+                continue;
+            }
+        }
+
+        // Check for unquoted identifiers that look like column names
+        // Match patterns like "Salary" but not string literals
+        if (char.IsLetter(expression[i]) && (i == 0 || !char.IsLetterOrDigit(expression[i - 1]) && expression[i - 1] != '_'))
+        {
+            var identifierStart = i;
+            while (i < expression.Length && (char.IsLetterOrDigit(expression[i]) || expression[i] == '_'))
+            {
+                i++;
+            }
+
+            var identifier = expression.Substring(identifierStart, i - identifierStart);
+
+            // Check if this looks like a column name (not a SQL keyword or function)
+            if (IsLikelyColumnName(identifier))
+            {
+                var convertedIdentifier = namingConverter.Convert(identifier);
+                result.Append($"\"{convertedIdentifier}\"");
+                continue;
+            }
+            else
+            {
+                result.Append(identifier);
+                continue;
+            }
+        }
+
+        result.Append(expression[i]);
+        i++;
+    }
+
+    return result.ToString();
+}
+
+private static bool IsLikelyColumnName(string identifier)
+{
+    // Keywords and functions that should NOT be converted
+    var sqlKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        // SQL keywords
+        "AND", "OR", "NOT", "IN", "IS", "NULL", "TRUE", "FALSE",
+        "BETWEEN", "LIKE", "EXISTS", "CASE", "WHEN", "THEN", "ELSE", "END",
+        // Common functions
+        "ABS", "CEILING", "FLOOR", "ROUND", "CAST", "CONVERT",
+        "SUBSTRING", "LENGTH", "UPPER", "LOWER", "TRIM",
+        "GETDATE", "DATEDIFF", "DATEADD", "YEAR", "MONTH", "DAY",
+        "COUNT", "SUM", "AVG", "MIN", "MAX",
+        "ISNULL", "COALESCE", "NULLIF",
+        // PostgreSQL specific
+        "NOW", "CURRENT_DATE", "CURRENT_TIMESTAMP",
+        // Numeric
+        "NUMERIC", "DECIMAL", "INT", "INTEGER", "BIGINT", "SMALLINT"
+    };
+
+    return !sqlKeywords.Contains(identifier);
 }
 
 private string ConvertDefaultExpression(string expression, string? columnDataType = null)

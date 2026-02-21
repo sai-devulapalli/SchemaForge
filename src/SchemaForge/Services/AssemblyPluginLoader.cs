@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using SchemaForge.Abstractions.Interfaces;
 
@@ -15,6 +16,15 @@ public class AssemblyPluginLoader : IPluginLoader
     /// </summary>
     public void LoadProviders(IServiceCollection services)
     {
+        // Explicitly load provider assemblies from the bin directory,
+        // since referenced assemblies aren't loaded until first use.
+        var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        foreach (var dll in Directory.GetFiles(baseDir, "SchemaForge.Providers.*.dll"))
+        {
+            try { Assembly.LoadFrom(dll); }
+            catch { /* ignore load failures */ }
+        }
+
         var providerTypes = AppDomain.CurrentDomain.GetAssemblies()
             .SelectMany(a =>
             {

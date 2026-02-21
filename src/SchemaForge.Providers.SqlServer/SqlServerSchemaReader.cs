@@ -1,6 +1,8 @@
 using SchemaForge.Abstractions.Interfaces;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using SchemaForge.Abstractions.Configuration;
 using SchemaForge.Abstractions.Models;
 
 namespace SchemaForge.Providers.SqlServer;
@@ -9,10 +11,16 @@ namespace SchemaForge.Providers.SqlServer;
 /// Reads schema metadata from SQL Server databases.
 /// Extracts tables, columns, primary keys, foreign keys, indexes, constraints, and views.
 /// </summary>
-public class SqlServerSchemaReader(ILogger<SqlServerSchemaReader> logger) : ISchemaReader
+public class SqlServerSchemaReader(
+    ILogger<SqlServerSchemaReader> logger,
+    IOptions<MigrationSettings>? settings = null) : ISchemaReader
 {
     /// <summary>
     /// Reads all table schemas from SQL Server including columns, keys, indexes, and constraints.
+    /// Respects <see cref="MigrationSettings.SourceSchemaName"/>:
+    ///   null  → filter by SCHEMA_NAME() (default, safe for single-schema / test databases)
+    ///   "*"   → read all non-system user schemas (e.g. WideWorldImporters)
+    ///   other → filter to that exact schema
     /// </summary>
     public async Task<List<TableSchema>> ReadSchemaAsync(string connectionString, IReadOnlyList<string>? includeTables = null, IReadOnlyList<string>? excludeTables = null)
     {
@@ -31,7 +39,8 @@ public class SqlServerSchemaReader(ILogger<SqlServerSchemaReader> logger) : ISch
             throw new InvalidOperationException($"Failed to connect to SQL Server: {ex.Message}", ex);
         }
 
-        var tableList = await GetTablesAsync(connection, includeTables, excludeTables);
+        var sourceSchemaName = settings?.Value.SourceSchemaName;
+        var tableList = await GetTablesAsync(connection, includeTables, excludeTables, sourceSchemaName);
         
         foreach (var (schema, tableName) in tableList)
         {
@@ -97,14 +106,28 @@ public class SqlServerSchemaReader(ILogger<SqlServerSchemaReader> logger) : ISch
     private static async Task<List<(string Schema, string Name)>> GetTablesAsync(
         SqlConnection connection,
         IReadOnlyList<string>? includeTables = null,
-        IReadOnlyList<string>? excludeTables = null)
+        IReadOnlyList<string>? excludeTables = null,
+        string? sourceSchemaName = null)
     {
         var tables = new List<(string, string)>();
 
-        var query = """
+        // Schema filter behaviour (controlled by MigrationSettings.SourceSchemaName):
+        //   null  → SCHEMA_NAME()  — safe default; prevents test-schema pollution in shared containers
+        //   "*"   → all non-system schemas — use for multi-schema DBs (e.g. WideWorldImporters)
+        //   other → exact schema name
+        string schemaFilter;
+        if (sourceSchemaName == null)
+            schemaFilter = "TABLE_SCHEMA = SCHEMA_NAME()";
+        else if (sourceSchemaName == "*")
+            schemaFilter = "TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest', 'db_owner', 'db_accessadmin', 'db_securityadmin', 'db_ddladmin', 'db_backupoperator', 'db_datareader', 'db_datawriter', 'db_denydatareader', 'db_denydatawriter')";
+        else
+            schemaFilter = "TABLE_SCHEMA = @SourceSchema";
+
+        var query = $"""
             SELECT TABLE_SCHEMA, TABLE_NAME
             FROM INFORMATION_SCHEMA.TABLES
             WHERE TABLE_TYPE = 'BASE TABLE'
+              AND {schemaFilter}
             """;
 
         // Add include filter if specified
@@ -121,9 +144,11 @@ public class SqlServerSchemaReader(ILogger<SqlServerSchemaReader> logger) : ISch
             query += $" AND TABLE_NAME NOT IN ({excludeList})";
         }
 
-        query += " ORDER BY TABLE_NAME";
+        query += " ORDER BY TABLE_SCHEMA, TABLE_NAME";
 
         await using var cmd = new SqlCommand(query, connection);
+        if (sourceSchemaName != null && sourceSchemaName != "*")
+            cmd.Parameters.AddWithValue("@SourceSchema", sourceSchemaName);
         await using var reader = await cmd.ExecuteReaderAsync();
 
         while (await reader.ReadAsync())

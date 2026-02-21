@@ -101,20 +101,34 @@ public class SqlDialectConverter : ISqlDialectConverter
 
         var converted = definition;
 
-        // Remove CREATE VIEW header if present
-        converted = Regex.Replace(converted, @"CREATE\s+VIEW\s+[\w\[\]""`.]+\s+AS\s+", "",
-            RegexOptions.IgnoreCase);
+        // Remove CREATE VIEW header if present.
+        // Handles: schema-qualified names, bracket-quoted, backtick-quoted, double-quoted.
+        // e.g. "CREATE VIEW dbo.vw_Foo AS", "CREATE VIEW [dbo].[vw_Foo] AS", etc.
+        converted = Regex.Replace(
+            converted,
+            @"CREATE\s+VIEW\s+(?:[\w\[\]""`.]+\s*\.\s*)?[\w\[\]""`.]+\s+AS\s+",
+            "",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
-        // Convert identifier quotes
+        // Convert identifier quotes first (e.g. [brackets] → "double-quotes")
         converted = ConvertIdentifierQuotes(converted, source, target);
 
-        // Replace source schema references with target schema
-        if (!string.IsNullOrEmpty(sourceSchema) && !string.IsNullOrEmpty(targetSchema))
+        // Replace schema-qualified table name references in ONE combined pass:
+        // e.g. dbo.Employees, "dbo".Employees, "dbo"."Employees", dbo."Employees"
+        // → "public"."employees"
+        // Doing this in a single step avoids intermediate states where a half-converted
+        // reference like "public".Employees gets merged into a single quoted identifier.
+        if (!string.IsNullOrEmpty(sourceSchema) && !string.IsNullOrEmpty(targetSchema) && tableNameMap != null)
         {
+            converted = ReplaceSchemaQualifiedTableNames(converted, sourceSchema, targetSchema, tableNameMap, target);
+        }
+        else if (!string.IsNullOrEmpty(sourceSchema) && !string.IsNullOrEmpty(targetSchema))
+        {
+            // No table map provided — just replace bare schema references.
             converted = ReplaceSchemaReferences(converted, sourceSchema, targetSchema, target);
         }
 
-        // Replace source table names with target table names
+        // Replace any remaining unqualified table/column name references
         if (tableNameMap != null)
         {
             converted = ReplaceTableNames(converted, tableNameMap, target);
@@ -334,6 +348,48 @@ public class SqlDialectConverter : ISqlDialectConverter
     }
 
     /// <summary>
+    /// Replaces schema-qualified table references in a single combined pass.
+    /// Handles all quote/bracket combinations:
+    ///   dbo.Table, [dbo].Table, "dbo".Table, dbo.[Table], dbo."Table", [dbo].[Table], "dbo"."Table"
+    /// Doing this in one step prevents intermediate states where a half-replaced reference
+    /// like "public".Table could be misread as a single double-quoted identifier.
+    /// </summary>
+    private static string ReplaceSchemaQualifiedTableNames(
+        string sql,
+        string sourceSchema,
+        string targetSchema,
+        Dictionary<string, string> tableNameMap,
+        DatabaseDialect target)
+    {
+        var qs = target.IdentifierQuoteStart;
+        var qe = target.IdentifierQuoteEnd;
+        var escapedQs = Regex.Escape(qs);
+        var escapedQe = Regex.Escape(qe);
+        var escapedSchema = Regex.Escape(sourceSchema);
+        var targetSchemaQuoted = $"{qs}{targetSchema}{qe}";
+
+        // Schema part: matches "dbo", dbo, [dbo] (brackets already converted to quotes by this point)
+        var schemaPattern = $@"(?:{escapedQs}{escapedSchema}{escapedQe}|{escapedSchema})";
+
+        // Sort longest names first to avoid partial matches
+        foreach (var (sourceName, targetName) in tableNameMap.OrderByDescending(kv => kv.Key.Length))
+        {
+            var escapedName = Regex.Escape(sourceName);
+            var targetNameQuoted = $"{qs}{targetName}{qe}";
+            var replacement = $"{targetSchemaQuoted}.{targetNameQuoted}";
+
+            // Table part: matches "Employees", Employees (with word boundary on the unquoted form)
+            var tablePattern = $@"(?:{escapedQs}{escapedName}{escapedQe}|(?<!\w){escapedName}(?!\w))";
+
+            var combinedPattern = $@"{schemaPattern}\s*\.\s*{tablePattern}";
+
+            sql = Regex.Replace(sql, combinedPattern, replacement, RegexOptions.IgnoreCase);
+        }
+
+        return sql;
+    }
+
+    /// <summary>
     /// Replaces source schema references in SQL with the target schema.
     /// Handles both quoted (e.g., "dbo"."Table") and unquoted (e.g., dbo.Table) references.
     /// </summary>
@@ -382,8 +438,12 @@ public class SqlDialectConverter : ISqlDialectConverter
             sql = Regex.Replace(sql, quotedPattern, quotedTarget, RegexOptions.IgnoreCase);
 
             // Replace unquoted references: Employees → `employees`
-            // Use word boundary to avoid replacing partial matches within other identifiers
-            var unquotedPattern = $@"\b{Regex.Escape(sourceName)}\b";
+            // Use word boundary + negative lookbehind/lookahead for the target quote character
+            // so we do NOT re-match identifiers that are already wrapped in target quotes.
+            // e.g. after ReplaceSchemaQualifiedTableNames produced "employees" or `employees`,
+            // the word boundary still fires because " and ` are non-word chars — without this
+            // guard, "employees" would get double-wrapped to ""employees"" or ``employees``.
+            var unquotedPattern = $@"(?<!{escapedQs})\b{Regex.Escape(sourceName)}\b(?!{escapedQe})";
             sql = Regex.Replace(sql, unquotedPattern, quotedTarget, RegexOptions.IgnoreCase);
         }
 

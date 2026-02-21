@@ -41,6 +41,14 @@ public class MigrationSettings
     /// <summary>Maximum identifier length. 0 uses target database default.</summary>
     public int MaxIdentifierLength { get; set; } = 0;
 
+    /// <summary>
+    /// Source schema name filter for reading tables.
+    /// null  = use the connection's default schema (SCHEMA_NAME()) — default behaviour, safe for tests.
+    /// "*"   = read all non-system user schemas (use for multi-schema databases like WideWorldImporters).
+    /// other = filter to that exact schema name.
+    /// </summary>
+    public string? SourceSchemaName { get; set; } = null;
+
     // Legacy property aliases for backward compatibility
     /// <summary>Alias for SourceConnectionString (legacy support).</summary>
     public string SqlServerConnectionString { get => SourceConnectionString; set => SourceConnectionString = value; }

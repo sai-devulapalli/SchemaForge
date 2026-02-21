@@ -249,8 +249,21 @@ public class MySqlSchemaWriter(
         var convertedColumn = namingConverter.Convert(columnName);
         var converted = dialectConverter.ConvertDefaultExpression(defaultExpression, dialectConverter.DetectSourceDatabase(defaultExpression), DatabaseTypes.MySql);
         if (string.IsNullOrWhiteSpace(converted)) return "";
-        return $"ALTER TABLE `{tableName}` ALTER COLUMN `{convertedColumn}` SET DEFAULT {converted}";
+
+        // MySQL 8.0.13+ requires expression defaults (function calls) to be wrapped in
+        // parentheses: SET DEFAULT (NOW()). Simple literals need no wrapping.
+        var defaultValue = IsMySqlExpression(converted) ? $"({converted})" : converted;
+
+        return $"ALTER TABLE `{tableName}` ALTER COLUMN `{convertedColumn}` SET DEFAULT {defaultValue}";
     }
+
+    /// <summary>
+    /// Returns true when <paramref name="value"/> is a SQL expression (function call or operator)
+    /// rather than a simple constant literal such as 0, 1, or 'Pending'.
+    /// MySQL 8.0.13+ requires expressions in DEFAULT to be parenthesised.
+    /// </summary>
+    private static bool IsMySqlExpression(string value)
+        => value.Contains('(') || value.Contains('+') || value.Contains('-');
 
     private async Task CreateDatabaseIfNotExistsAsync(MySqlConnection? connection, string schemaName)
     {

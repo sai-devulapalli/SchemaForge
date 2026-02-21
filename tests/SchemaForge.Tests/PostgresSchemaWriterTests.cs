@@ -185,7 +185,24 @@ public class PostgresSchemaWriterTests
 
         var stmt = _sqlCollector.GetStatements().First(s => s.Category == "Constraints");
         Assert.Contains("CHECK", stmt.Sql);
-        Assert.Contains("\"Age\" >= 0", stmt.Sql);
+        Assert.Contains("\"age\" >= 0", stmt.Sql);
+    }
+
+    [Fact]
+    public async Task CreateConstraintsAsync_ConvertsSalaryCheckConstraint()
+    {
+        var constraints = new List<ConstraintSchema>
+        {
+            TestData.Constraint("CK_Employees_Salary", "Employees", "dbo", ConstraintType.Check,
+                columns: ["Salary"], checkExpression: "CHECK (Salary >= 0)")
+        };
+
+        await _writer.CreateConstraintsAsync("", "public", constraints);
+
+        var stmt = _sqlCollector.GetStatements().First(s => s.Category == "Constraints");
+        Assert.Contains("CHECK", stmt.Sql);
+        Assert.Contains("\"salary\" >= 0", stmt.Sql);
+        Assert.DoesNotContain("Salary", stmt.Sql); // Ensure uppercase is not present
     }
 
     [Fact]
